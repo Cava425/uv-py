@@ -1,0 +1,716 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="description" content="VMBC 场景数据 Flink 作业的架构、数据流、可靠性、运维边界与工程复杂度。">
+  <title>vmbc-data-flink · 架构与技术设计</title>
+  <style>
+    :root {
+      --ink: #17272c;
+      --muted: #52666b;
+      --paper: #f3f4ee;
+      --card: #fffefa;
+      --line: #d6ded8;
+      --teal: #0b6e69;
+      --teal-soft: #e1f1ec;
+      --amber: #b75e2b;
+      --amber-soft: #fff0e3;
+      --blue: #315b73;
+      --blue-soft: #e9f0f5;
+      --red: #9b3d35;
+      --red-soft: #fae9e5;
+      --shadow: 0 12px 34px rgba(24, 48, 50, .07);
+      --serif: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, serif;
+      --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; scroll-padding-top: 24px; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        radial-gradient(ellipse at 8% 0%, rgba(11, 110, 105, .11), transparent 34rem),
+        radial-gradient(ellipse at 100% 18%, rgba(183, 94, 43, .08), transparent 32rem),
+        var(--paper);
+      font: 15px/1.72 var(--sans);
+    }
+    a { color: var(--teal); text-decoration-thickness: 1px; text-underline-offset: 3px; }
+    a:hover { color: var(--amber); }
+    code, pre, .mono { font-family: var(--mono); }
+    code { font-size: .9em; overflow-wrap: anywhere; }
+    .shell { max-width: 1440px; margin: 0 auto; padding: 28px clamp(16px, 3vw, 48px) 72px; }
+    .hero {
+      position: relative;
+      overflow: hidden;
+      padding: clamp(30px, 5vw, 68px);
+      color: #f8fbf8;
+      background:
+        linear-gradient(118deg, rgba(10, 54, 59, .97), rgba(17, 91, 83, .95) 61%, rgba(42, 91, 103, .96)),
+        #123d43;
+      border-radius: 28px;
+      box-shadow: var(--shadow);
+    }
+    .hero::after {
+      content: "";
+      position: absolute;
+      right: -100px;
+      bottom: -240px;
+      width: 580px;
+      height: 580px;
+      border: 1px solid rgba(255,255,255,.2);
+      border-radius: 50%;
+      box-shadow: 0 0 0 42px rgba(255,255,255,.035), 0 0 0 90px rgba(255,255,255,.025);
+      pointer-events: none;
+    }
+    .eyebrow {
+      margin: 0 0 14px;
+      color: #a7d6ca;
+      font: 700 12px/1.2 var(--mono);
+      letter-spacing: .13em;
+      text-transform: uppercase;
+    }
+    h1 {
+      max-width: 900px;
+      margin: 0;
+      font: 500 clamp(36px, 6vw, 72px)/1.04 var(--serif);
+      letter-spacing: -.035em;
+    }
+    h1 code { color: #d8efe5; font: 500 .63em/1.2 var(--mono); letter-spacing: -.05em; }
+    .hero-copy { max-width: 840px; margin: 22px 0 0; color: #d9e8e3; font-size: 17px; }
+    .pills { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 26px; }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 31px;
+      padding: 5px 11px;
+      color: #f6fbf8;
+      background: rgba(255,255,255,.1);
+      border: 1px solid rgba(255,255,255,.22);
+      border-radius: 999px;
+      font-size: 12px;
+    }
+    .layout { display: grid; grid-template-columns: 248px minmax(0, 1fr); gap: 28px; margin-top: 28px; align-items: start; }
+    nav {
+      position: sticky;
+      top: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      max-height: calc(100vh - 40px);
+      overflow: auto;
+      padding: 18px 14px;
+      background: rgba(255,254,250,.86);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      box-shadow: var(--shadow);
+    }
+    nav strong { padding: 3px 9px 10px; color: var(--muted); font: 700 11px/1.3 var(--mono); letter-spacing: .08em; }
+    nav a { padding: 7px 9px; color: var(--ink); border-radius: 8px; font-size: 12px; text-decoration: none; }
+    nav a:hover { color: var(--teal); background: var(--teal-soft); }
+    main { min-width: 0; }
+    section {
+      margin-bottom: 22px;
+      padding: clamp(22px, 3vw, 38px);
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      box-shadow: var(--shadow);
+    }
+    h2 { display: flex; gap: 13px; align-items: baseline; margin: 0 0 20px; font: 500 clamp(25px, 3vw, 37px)/1.15 var(--serif); letter-spacing: -.02em; }
+    h3 { margin: 25px 0 9px; font-size: 17px; line-height: 1.35; }
+    h4 { margin: 0 0 7px; font-size: 14px; }
+    p { margin: 10px 0; }
+    ul, ol { margin: 8px 0 14px; padding-left: 21px; }
+    li { margin: 5px 0; }
+    .num { color: var(--amber); font: 700 12px/1 var(--mono); letter-spacing: .04em; }
+    .lead { max-width: 1000px; color: #33494e; font-size: 17px; }
+    .subtle { color: var(--muted); }
+    .small { font-size: 12px; }
+    .grid { display: grid; gap: 14px; }
+    .grid.two { grid-template-columns: repeat(2, minmax(0,1fr)); }
+    .grid.three { grid-template-columns: repeat(3, minmax(0,1fr)); }
+    .card {
+      min-width: 0;
+      padding: 18px;
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+    }
+    .card p:last-child, .card ul:last-child { margin-bottom: 0; }
+    .card.teal { background: var(--teal-soft); border-color: #b8d9cf; }
+    .card.blue { background: var(--blue-soft); border-color: #cbd9e1; }
+    .card.amber { background: var(--amber-soft); border-color: #efd0b5; }
+    .card.red { background: var(--red-soft); border-color: #e8c1bc; }
+    .label {
+      display: inline-block;
+      margin-bottom: 9px;
+      color: var(--muted);
+      font: 700 10px/1.3 var(--mono);
+      letter-spacing: .1em;
+      text-transform: uppercase;
+    }
+    .callout {
+      margin: 18px 0;
+      padding: 15px 18px;
+      background: #f1f5f2;
+      border-left: 4px solid var(--teal);
+      border-radius: 0 10px 10px 0;
+    }
+    .callout.warn { background: var(--amber-soft); border-color: var(--amber); }
+    .callout.risk { background: var(--red-soft); border-color: var(--red); }
+    .callout p:first-child { margin-top: 0; }
+    .callout p:last-child { margin-bottom: 0; }
+    .table-wrap { width: 100%; overflow-x: auto; margin: 14px 0 18px; border: 1px solid var(--line); border-radius: 12px; }
+    table { width: 100%; border-collapse: collapse; min-width: 640px; background: #fff; font-size: 13px; }
+    th, td { padding: 11px 13px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--line); }
+    th { color: #354d51; background: #edf2ee; font-size: 11px; letter-spacing: .04em; }
+    tr:last-child td { border-bottom: 0; }
+    .tag {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: var(--blue-soft);
+      color: var(--blue);
+      font-size: 11px;
+      white-space: nowrap;
+    }
+    .tag.ok { background: var(--teal-soft); color: var(--teal); }
+    .tag.warn { background: var(--amber-soft); color: #8d4a20; }
+    .tag.risk { background: var(--red-soft); color: var(--red); }
+    .flow {
+      margin: 18px 0;
+      padding: 12px;
+      overflow-x: auto;
+      background: linear-gradient(135deg, #f8faf6, #edf4f1);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+    }
+    .flow svg { display: block; width: 100%; min-width: 800px; height: auto; }
+    .flow .node { fill: #fffefa; stroke: #b7c8c0; stroke-width: 1.5; }
+    .flow .source { fill: #e9f0f5; stroke: #7894a4; }
+    .flow .job { fill: #e1f1ec; stroke: #4f9586; }
+    .flow .sink { fill: #fff0e3; stroke: #c47b4b; }
+    .flow .external { fill: #f1f2eb; stroke: #9aa8a0; stroke-dasharray: 5 4; }
+    .flow .edge { stroke: #668078; stroke-width: 2; fill: none; }
+    .flow .edge-dashed { stroke: #9b7a56; stroke-width: 1.7; stroke-dasharray: 6 5; fill: none; }
+    .flow .title { fill: #17272c; font: 700 15px var(--sans); }
+    .flow .caption { fill: #52666b; font: 12px var(--sans); }
+    .flow .smalltext { fill: #52666b; font: 11px var(--sans); }
+    .steps { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 10px; counter-reset: step; margin: 14px 0; }
+    .step { position: relative; min-height: 106px; padding: 14px 14px 14px 42px; background: #f8faf6; border: 1px solid var(--line); border-radius: 12px; }
+    .step::before { counter-increment: step; content: counter(step, decimal-leading-zero); position: absolute; left: 13px; top: 14px; color: var(--amber); font: 700 12px var(--mono); }
+    .step strong { display: block; margin-bottom: 5px; font-size: 13px; }
+    .step span { color: var(--muted); font-size: 12px; }
+    .codebox { overflow-x: auto; padding: 13px 15px; color: #e5eee9; background: #18373b; border-radius: 11px; font: 12px/1.7 var(--mono); }
+    .metric { font: 700 12px var(--mono); color: #235d59; }
+    .footer { padding: 20px 8px 0; color: var(--muted); font-size: 12px; text-align: center; }
+    @media (max-width: 980px) {
+      .layout { grid-template-columns: 1fr; }
+      nav { position: static; max-height: none; display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); }
+      nav strong { grid-column: 1 / -1; }
+      .grid.three { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 640px) {
+      .shell { padding: 12px 10px 38px; }
+      .hero { border-radius: 18px; padding: 28px 20px; }
+      .hero-copy { font-size: 15px; }
+      .layout { gap: 13px; margin-top: 13px; }
+      nav { grid-template-columns: 1fr 1fr; padding: 12px 10px; }
+      nav a { font-size: 11px; }
+      section { padding: 20px 16px; border-radius: 15px; }
+      .grid.two, .steps { grid-template-columns: 1fr; }
+      h2 { font-size: 27px; }
+    }
+    @media print {
+      body { background: #fff; font-size: 11pt; }
+      .shell { max-width: none; padding: 0; }
+      .hero { color: #17272c; background: #e7f0eb; box-shadow: none; }
+      .hero-copy, .eyebrow { color: #315b54; }
+      .pill { color: #17272c; border-color: #9db5ab; background: transparent; }
+      .layout { display: block; }
+      nav { display: none; }
+      section { box-shadow: none; break-inside: avoid; }
+      a { color: inherit; }
+    }
+  </style>
+</head>
+<body>
+<div class="shell">
+  <header class="hero">
+    <p class="eyebrow">VMBC · Data Platform · Architecture Note · 2026-10-27</p>
+    <h1><code>vmbc-data-flink</code><br>架构与技术设计</h1>
+    <p class="hero-copy">
+      面向场景数据查询的 Elasticsearch 派生读模型。本文结合项目总结、当前工作区实现与场景管理规格，
+      解释三条数据路径如何协作、可靠性边界在哪里，以及系统落地的主要工程难点。
+    </p>
+    <div class="pills">
+      <span class="pill">MySQL → Debezium / Kafka → Flink → Elasticsearch</span>
+      <span class="pill">2 条实时投影 + 1 条有界回灌</span>
+      <span class="pill">Flink 1.16.1 · Elasticsearch 7 Connector</span>
+      <span class="pill">核对基准：2026-10-27 当前工作区</span>
+    </div>
+  </header>
+
+  <div class="layout">
+    <nav aria-label="文档目录">
+      <strong>ARCHITECTURE / 目录</strong>
+      <a href="#decision">01 · 定位与结论</a>
+      <a href="#topology">02 · 总体架构</a>
+      <a href="#jobs">03 · 作业职责</a>
+      <a href="#primary">04 · 主数据实时流</a>
+      <a href="#tags">05 · 标签快照流</a>
+      <a href="#backfill">06 · 历史回灌</a>
+      <a href="#projection">07 · ES 投影语义</a>
+      <a href="#reliability">08 · 可靠性与故障恢复</a>
+      <a href="#operations">09 · 部署与可观测性</a>
+      <a href="#engineering">10 · 亮点、难点与工作量</a>
+      <a href="#gaps">11 · 风险与契约差异</a>
+      <a href="#references">12 · 实现与规格索引</a>
+    </nav>
+
+    <main>
+      <section id="decision">
+        <h2><span class="num">01</span>定位与结论</h2>
+        <p class="lead">
+          <strong>这是一个面向查询的投影系统，不是业务主数据系统。</strong>
+          MySQL 保持权威写入；Flink 消费变更并补充关联快照，将可查询文档写入 Elasticsearch。
+          场景管理 ES 列表可承担复杂过滤和检索，详情、下载及强一致校验仍应回到 MySQL 业务链路。
+        </p>
+        <div class="grid three">
+          <article class="card teal">
+            <span class="label">职责拆分</span>
+            <h3>两个实时 Job，各自维护一个投影切面</h3>
+            <p>主数据 Job 更新文档主体和数据集关系；标签 Job 用关系表变更触发标签、标注人快照刷新。</p>
+          </article>
+          <article class="card blue">
+            <span class="label">恢复与补齐</span>
+            <h3>回灌独立于实时流</h3>
+            <p>有界 MySQL 游标扫描用于历史补数或重建。确定性文档 ID 让同一租户同一场景数据落到同一 ES 文档。</p>
+          </article>
+          <article class="card amber">
+            <span class="label">一致性模型</span>
+            <h3>最终一致，不是跨系统事务</h3>
+            <p>Checkpoint 管理 Flink 状态与 Source 进度；ES Bulk 写入没有与 MySQL、Kafka、Flink Checkpoint 组成原子事务。</p>
+          </article>
+        </div>
+        <div class="callout warn">
+          <strong>文档基线说明：</strong>
+          本文按 2026-10-27 的当前工作区快照核对，包含尚未提交的工作区改动，不等同于已发布制品。
+          当前工作区 POM 显示版本 <code>1.0.12</code>、Java target <code>17</code>；README 仍写 Java 8。
+          发布前应确认目标 Flink 集群的 JVM 版本与这组代码变更是否一致。
+        </div>
+      </section>
+
+      <section id="topology">
+        <h2><span class="num">02</span>总体架构与数据边界</h2>
+        <p>实时变更由 Debezium/Kafka 提供；两条实时流在 Flink 内补充不同的 MySQL 关系快照。回灌 Job 则直接读取 MySQL，不经过 Kafka。</p>
+        <div class="flow" role="img" aria-label="MySQL CDC 经 Kafka 进入两个实时 Flink Job，另有 MySQL 有界回灌，三条路径写入 Elasticsearch 派生索引">
+          <svg viewBox="0 0 1180 470" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+              <marker id="arrow" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
+                <path d="M0,0 L9,4.5 L0,9 Z" fill="#668078"/>
+              </marker>
+              <marker id="arrowDash" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
+                <path d="M0,0 L9,4.5 L0,9 Z" fill="#9b7a56"/>
+              </marker>
+            </defs>
+            <rect class="node source" x="30" y="52" width="210" height="128" rx="14"/>
+            <text class="title" x="52" y="82">MySQL · 权威数据</text>
+            <text class="caption" x="52" y="108">scenario_data</text>
+            <text class="caption" x="52" y="130">tag_data_relation / tag</text>
+            <text class="caption" x="52" y="152">dataset_version_relation</text>
+
+            <rect class="node external" x="300" y="45" width="190" height="62" rx="12"/>
+            <text class="title" x="326" y="72">Debezium CDC</text>
+            <text class="smalltext" x="326" y="92">外部采集 / 转换服务</text>
+            <rect class="node source" x="300" y="128" width="190" height="62" rx="12"/>
+            <text class="title" x="326" y="155">Kafka Topics</text>
+            <text class="smalltext" x="326" y="175">场景数据 / 标签关系</text>
+            <path class="edge" marker-end="url(#arrow)" d="M240 110 H294"/>
+            <path class="edge" marker-end="url(#arrow)" d="M395 107 V122"/>
+
+            <rect class="node job" x="555" y="35" width="265" height="112" rx="14"/>
+            <text class="title" x="580" y="65">Job A · 主数据实时投影</text>
+            <text class="caption" x="580" y="91">解析 c/u → 查数据集关系</text>
+            <text class="caption" x="580" y="115">构造主文档 → Update / Upsert</text>
+            <rect class="node job" x="555" y="164" width="265" height="112" rx="14"/>
+            <text class="title" x="580" y="194">Job B · 标签快照投影</text>
+            <text class="caption" x="580" y="220">事件合并 → 分桶批查关系快照</text>
+            <text class="caption" x="580" y="244">局部更新 tags / annotators</text>
+            <path class="edge" marker-end="url(#arrow)" d="M490 158 H520 V91 H549"/>
+            <path class="edge" marker-end="url(#arrow)" d="M490 158 H520 V220 H549"/>
+
+            <rect class="node job" x="555" y="332" width="265" height="95" rx="14"/>
+            <text class="title" x="580" y="362">Job C · 有界历史回灌</text>
+            <text class="caption" x="580" y="388">MySQL 游标 / 分页 / 批量补齐</text>
+            <text class="caption" x="580" y="410">固定租户与目标索引，处理完退出</text>
+            <path class="edge-dashed" marker-end="url(#arrowDash)" d="M240 142 H270 V380 H549"/>
+            <text class="smalltext" x="285" y="367">直接 JDBC 读取，不走 Kafka</text>
+
+            <rect class="node sink" x="905" y="122" width="235" height="140" rx="16"/>
+            <text class="title" x="934" y="158">Elasticsearch</text>
+            <text class="caption" x="934" y="184">场景数据查询读模型</text>
+            <text class="caption" x="934" y="208">固定文档键：tenant:id</text>
+            <text class="caption" x="934" y="232">最终一致 / 面向检索</text>
+            <path class="edge" marker-end="url(#arrow)" d="M820 91 H865 V164 H899"/>
+            <path class="edge" marker-end="url(#arrow)" d="M820 220 H899"/>
+            <path class="edge" marker-end="url(#arrow)" d="M820 378 H865 V240 H899"/>
+
+            <rect class="node external" x="905" y="322" width="235" height="80" rx="14"/>
+            <text class="title" x="933" y="353">场景管理 ES 列表</text>
+            <text class="caption" x="933" y="378">复杂筛选 / 标签值检索</text>
+            <path class="edge" marker-end="url(#arrow)" d="M1022 268 V316"/>
+
+            <text class="smalltext" x="31" y="222">实线：实时变更链路</text>
+            <text class="smalltext" x="31" y="242">虚线：历史补齐链路</text>
+            <text class="smalltext" x="31" y="285">虚线查询：Flink 处理时反查 MySQL，</text>
+            <text class="smalltext" x="31" y="303">不是另一条 CDC 流</text>
+          </svg>
+        </div>
+        <div class="grid two">
+          <div class="card">
+            <h3>Flink 作业边界</h3>
+            <p>三个入口独立提交、消费/读取方式不同：主数据实时、标签实时、场景数据回灌。作业间不共享 Flink 状态，也没有跨 Job 的原子更新。</p>
+          </div>
+          <div class="card">
+            <h3>读模型边界</h3>
+            <p>ES 是由多条写入路径共同维护的投影。相同租户规则、索引名和文档 ID 是协作前提；ES 查询延迟与数据库主视图短暂不一致是设计属性。</p>
+          </div>
+        </div>
+      </section>
+
+      <section id="jobs">
+        <h2><span class="num">03</span>三个 Job 的职责分工</h2>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Job</th><th>输入</th><th>核心工作</th><th>ES 写入方式</th><th>生命周期</th></tr></thead>
+            <tbody>
+              <tr>
+                <td><strong>场景数据实时</strong><br><code>ScenarioDataBinlogConsumeRTJob</code></td>
+                <td>场景数据 Debezium Topic</td>
+                <td>解析主表 c/u；逐事件查有效数据集版本关系；构造基础字段和 metadata 投影</td>
+                <td><code>UpdateRequest</code> + <code>docAsUpsert</code></td>
+                <td>持续运行；Checkpoint 默认间隔 300 秒</td>
+              </tr>
+              <tr>
+                <td><strong>标签关系实时</strong><br><code>ScenarioDataTagRelationConsumeRTJob</code></td>
+                <td>标签关系 Debezium Topic / 独立消费组</td>
+                <td>c/u/d 统一为对象刷新信号；按对象合并事件，再按 bucket 批量查询标签快照</td>
+                <td>仅更新 <code>tags</code>、<code>annotators</code>；不 upsert</td>
+                <td>持续运行；Flink keyed state 记录待处理事件和 timer</td>
+              </tr>
+              <tr>
+                <td><strong>历史回灌</strong><br><code>ScenarioDataBackfillMain</code></td>
+                <td>MySQL 有界主表扫描</td>
+                <td>按递增 ID 分页；每页批查标签与数据集关系；单并行度推进游标</td>
+                <td><code>IndexRequest</code> 覆盖确定性 ID</td>
+                <td>读到 EOF 后正常结束；目标租户、索引和批大小为代码常量</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="callout">
+          <strong>为何分成两个实时 Job？</strong>
+          主表和标签关系表拥有不同 Topic、更新频率和投影语义。标签变化无需等待主表变化即可刷新标签；
+          同时，标签快照批处理可以独立调节状态、查询批次与并行度。代价是同一文档可能被不同 Job 并发局部更新，需要审慎定义字段所有权。
+        </div>
+      </section>
+
+      <section id="primary">
+        <h2><span class="num">04</span>主数据实时流：CDC 到文档 Upsert</h2>
+        <div class="steps">
+          <div class="step"><strong>读取事件</strong><span>旧版 <code>FlinkKafkaConsumer&lt;String&gt;</code> 读取 Debezium JSON。</span></div>
+          <div class="step"><strong>提取 after</strong><span>仅 c/u 进入投影；非法 JSON 抛异常，非写入事件输出空对象后被 Sink 跳过。</span></div>
+          <div class="step"><strong>关联补充</strong><span>每条有效事件 JDBC 查询数据集版本关联，过滤 <code>deleted=0</code>。</span></div>
+          <div class="step"><strong>写 ES</strong><span>用 <code>lesseeCode:id</code> 做 ID，Bulk 中提交文档部分更新 / upsert。</span></div>
+        </div>
+        <h3>数据集关联查询是同步的逐事件 enrich</h3>
+        <p>
+          <code>ScenarioDataDatasetRelationEnrichment</code> 对每条带租户和主键的主表变更执行一次参数化 SQL，
+          输出 <code>datasetRelations[]</code>。这使每条主表事件能读取当时有效关系，并让空结果数组覆盖旧关系；
+          但也将 MySQL 查询量与 CDC 事件量直接绑定。
+        </p>
+        <div class="codebox">vmbc_scenario_data CDC
+  → payload.after (c/u)
+  → SELECT active dataset relations
+  → buildScenarioDataDocument(...)
+  → UpdateRequest(index, lesseeCode + ":" + id)
+       .doc(document)
+       .docAsUpsert(true)</div>
+        <div class="grid two">
+          <article class="card blue">
+            <h3>删除边界</h3>
+            <p>主数据 transform 当前只接受 c/u。物理删除事件没有构造成 ES Delete；逻辑删除更新会将 <code>deleted</code> 写入投影，但具体查询是否过滤仍由 ES 查询端负责。</p>
+          </article>
+          <article class="card amber">
+            <h3>关系变更边界</h3>
+            <p>数据集关系表的独立变化不会触发本 Job。已有文档的 <code>datasetRelations</code> 可能保持旧值，直到主表再有变更或通过回灌/其他重建机制刷新。</p>
+          </article>
+        </div>
+      </section>
+
+      <section id="tags">
+        <h2><span class="num">05</span>标签流：事件合并后刷新完整快照</h2>
+        <p class="lead">标签事件不是逐条翻译为 ES 增删操作，而是“某个场景数据的标签快照需要刷新”的信号；刷新时 MySQL 的有效关系集合才是标签内容来源。</p>
+        <div class="steps">
+          <div class="step"><strong>归一化变更</strong><span>c/u 从 <code>after</code> 取对象；d 从 <code>before</code> 取对象；只接收 <code>SCENARIO_DATA</code>。</span></div>
+          <div class="step"><strong>按文档去抖</strong><span>Key 为 <code>tenant:scenarioDataId</code>；固定 processing-time 窗口保留最新事件。</span></div>
+          <div class="step"><strong>按桶组批</strong><span>用租户和对象 ID hash 分桶；每桶达到 batch size 或 timer 到期就 flush。</span></div>
+          <div class="step"><strong>批量构造快照</strong><span>一条参数化 IN 查询有效关系及标签，输出每个对象的标签和去重标注人。</span></div>
+        </div>
+        <div class="grid two">
+          <article class="card teal">
+            <span class="label">关键实现</span>
+            <h3>空快照也必须发出</h3>
+            <p>查询前为本批每个 ID 初始化空 <code>tags</code> 与 <code>annotators</code>。关系被删除或查无有效标签时，空数组仍写回 ES，避免旧标签永久残留。</p>
+          </article>
+          <article class="card blue">
+            <span class="label">写入所有权</span>
+            <h3>不 Upsert，避免产生残缺文档</h3>
+            <p>标签 Sink 只局部更新现有文档，并设置 <code>retryOnConflict(3)</code>。ES 主文档仍由主数据流或回灌创建。</p>
+          </article>
+        </div>
+        <div class="callout warn">
+          固定窗口从首个事件开始，不因后续事件而延长；它是处理时间合并，不是事件时间排序或严格静默窗口。
+          该 Job 只监听标签关系 Topic，标签主表自身的名称、类型、层级或删除变更不会触发相关场景数据刷新。
+        </div>
+      </section>
+
+      <section id="backfill">
+        <h2><span class="num">06</span>历史回灌：有界游标扫描</h2>
+        <p>回灌入口直接从 MySQL 读取有效场景数据，按 <code>id &gt; lastId ORDER BY id LIMIT batch</code> 推进。每页分别批量读取标签快照和数据集关联，再将完整文档送入 ES。</p>
+        <div class="grid three">
+          <article class="card">
+            <span class="label">扫描策略</span>
+            <p>当前固定租户 <code>NIO</code>、批次 100、并行度 1、起始 ID 0；<code>END_ID=0</code> 表示不限制结束 ID。</p>
+          </article>
+          <article class="card">
+            <span class="label">状态恢复</span>
+            <p>Source Operator State 保存 <code>lastId</code>。Checkpoint 恢复可以从最近保存的游标继续；无恢复状态重新提交会从配置常量重新扫描。</p>
+          </article>
+          <article class="card amber">
+            <span class="label">写入目标</span>
+            <p>当前代码常量目标是 <code>vmbc_data_be_stg_scenario_data_query_v1</code>，与 README/样例 Mapping 中的 test 索引名不同。</p>
+          </article>
+        </div>
+        <div class="callout risk">
+          回灌不是无风险的“全量同步按钮”：执行前必须核对租户、目标索引、Mapping、覆盖策略和数据量。
+          同一固定 ID 重写可避免重复文档，但错误目标索引仍可能造成大范围覆盖或写入到错误环境。
+        </div>
+      </section>
+
+      <section id="projection">
+        <h2><span class="num">07</span>ES 文档模型与投影语义</h2>
+        <p>文档 ID 为 <code>{lesseeCode}:{scenarioDataId}</code>。主数据流拥有基础字段、metadata 派生字段与数据集关系；标签流拥有 <code>tags</code>/<code>annotators</code> 局部字段。</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>ES 字段组</th><th>上游来源</th><th>写入策略</th><th>用途/注意点</th></tr></thead>
+            <tbody>
+              <tr><td>主字段<br><code>fileName</code>、<code>dataType</code>、<code>status</code>、<code>storagePath</code> 等</td><td><code>vmbc_scenario_data</code></td><td>主流部分更新 + Upsert</td><td>列表检索、筛选、展示；字段空值通常会被省略，而不是显式清除。</td></tr>
+              <tr><td>时间字段<br><code>storageTime</code>、<code>createdAt</code>、<code>updatedAt</code></td><td>MySQL <code>DATETIME</code></td><td>按上海本地时间语义转 epoch millis</td><td>需用真实 Connector/J、JVM 时区与 MySQL DATETIME 做端到端用例验证。</td></tr>
+              <tr><td>元数据派生字段<br><code>vehiclePlatform</code>、<code>modelType</code>、<code>vehicleId</code>、<code>ruleName</code>、<code>uuid</code>、<code>triggerTime</code></td><td><code>metadata.extra</code>、<code>metadata.manifest</code></td><td>实时主流提取；trigger_time 纳秒除以 1,000,000</td><td>匹配场景管理 ES 列表的元数据过滤契约；旧索引文档不会自动补齐。</td></tr>
+              <tr><td><code>datasetRelations</code></td><td>数据集版本关系表</td><td>主表事件时 JDBC 回查；回灌按页批查</td><td>当前投影包含 <code>datasetId</code> 与 <code>datasetVersionPkId</code>；和查询端期望字段需统一。</td></tr>
+              <tr><td><code>tags</code>、<code>annotators</code></td><td>标签关系表 JOIN 标签主表</td><td>标签 Job 批量重建完整快照后局部替换</td><td>嵌套对象/标签值检索能力依赖线上 Mapping 与查询 DSL 一致。</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="grid two">
+          <article class="card">
+            <h3>Metadata 转换当前实现</h3>
+            <p>支持 JSON 对象或 JSON 字符串；按 <code>extra.vehicle_platform</code>、<code>extra.model_type</code>、<code>extra.vehicle_id</code>、<code>extra.rule_name</code>、<code>manifest.record_uuid</code> 读取。<code>trigger_time</code> 以纳秒整数除以百万转换为毫秒。</p>
+          </article>
+          <article class="card red">
+            <h3>实时与回灌投影不完全对称</h3>
+            <p>实时 Sink 当前已提取 metadata 派生字段，但回灌主表 SQL 尚未 SELECT <code>metadata</code>，因此回灌不会构造这些派生字段。历史补数不能仅凭当前回灌流程保证补齐新 metadata 查询字段。</p>
+          </article>
+        </div>
+        <p class="subtle small">索引样例文件可辅助理解字段和分析器，但它不等于线上实际 Mapping。尤其是 dynamic 设置、nested 结构与字段类型，必须以部署目标索引为准。</p>
+      </section>
+
+      <section id="reliability">
+        <h2><span class="num">08</span>Checkpoint、Bulk 与故障恢复</h2>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>层次</th><th>当前机制</th><th>保证与边界</th></tr></thead>
+            <tbody>
+              <tr><td>Flink Checkpoint</td><td>三个入口启用 checkpoint；Apollo 默认间隔 300,000 ms</td><td>恢复 Flink 托管状态及支持的 Source 状态。Checkpoint 成功不代表 ES 与 Source 的外部效果组成原子事务。</td></tr>
+              <tr><td>Kafka Source</td><td>显式支持 latest / earliest / group offsets</td><td>首次启动偏移由模式决定；从有效 checkpoint 恢复时以恢复状态为准。自动提交配置不能替代 checkpoint 状态语义。</td></tr>
+              <tr><td>实时 ES Bulk</td><td>最多 1,000 actions 或 5 秒 flush；指数退避，最大 5 次，初始延迟 200 ms</td><td>重试后仍失败可将异常传回 Flink，触发 Job 失败与集群配置的恢复策略；具体退避次数/异常分类以运行时 Connector 为准。</td></tr>
+              <tr><td>文档幂等性</td><td>tenant:id 固定 ID；主流 Update/Upsert，回灌 Index 覆盖</td><td>降低同一变更重放造成的重复文档；不等于端到端 exactly-once，也不防止旧版本覆盖新版本。</td></tr>
+              <tr><td>重启策略</td><td>作业代码未设置显式 Restart Strategy</td><td>是否自动重启、间隔和次数上限由 Flink 集群/提交配置决定；检查 Dashboard restart count、attempt 和 checkpoint。</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="callout">
+          <strong>2026-10-27 运行现象：</strong>
+          Dashboard 异常记录显示 ES Bulk 连接在 30 秒超时。配套监控中 Job Uptime 在约 12:00 归零，
+          <code>job_fullRestarts</code> 从 68 增至 69，随后 Uptime 重新增长；这与 11:54:40 的异常时间相邻，
+          强烈支持作业随后发生了一次全量重启并恢复运行。该证据确认了重启现象，但未单独确认 ES 响应慢、网络链路还是代理为超时根因。
+        </div>
+        <p>恢复后的数据可能从最近成功的 Checkpoint 重放。固定 ID 使主文档重放趋于覆盖同一文档；排查时仍需观察 Checkpoint 完成、Kafka lag、Sink Bulk 失败和 ES 写入队列，而不能只看提交计数日志。</p>
+      </section>
+
+      <section id="operations">
+        <h2><span class="num">09</span>部署前置条件与可观测性</h2>
+        <div class="grid two">
+          <article class="card">
+            <span class="label">运行时依赖</span>
+            <h3>应用 JAR 不是完整 Flink Runtime</h3>
+            <ul>
+              <li>Apache Flink 1.16.1；Kafka 与 Elasticsearch Connector 使用 <code>provided</code>，由提交/集群环境提供兼容版本。</li>
+              <li>ES 目标为 ES 8 时，需按兼容方案加载 ES7 Connector patch；避免原始 Connector 与 patch 重复加载。</li>
+              <li>应用从 Apollo <code>vmbc_data_flink</code> 读取配置；数据库凭证使用通用 <code>database.*</code>。</li>
+              <li>当前代码以 <code>http</code> 构造 ES Host 并配置 Basic Auth；需确认网络隔离或 TLS 终止边界。</li>
+            </ul>
+          </article>
+          <article class="card">
+            <span class="label">资源与背压</span>
+            <h3>数据路径会同步依赖 MySQL 与 ES</h3>
+            <ul>
+              <li>主数据流每条有效事件单次 JDBC enrichment；数据库慢或连接池等待会直接拖慢算子。</li>
+              <li>标签流以 bucket 聚合查询降低 SQL 次数；热点桶、批量尾延迟和状态大小仍需监控。</li>
+              <li>连接池为 TaskManager JVM 级静态池，需按 TaskManager 数与池上限评估数据库连接总量。</li>
+              <li>标签 enrichment 暂时关闭 chaining，利于分段观察反压，但会增加序列化和网络传输。</li>
+            </ul>
+          </article>
+        </div>
+        <h3>建议按信号分层排障</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>观察面</th><th>已具备/建议关注的信号</th><th>排查问题</th></tr></thead>
+            <tbody>
+              <tr><td>Flink Job</td><td>Job uptime、full restarts、异常时间、Checkpoint 完成/耗时/失败、算子 busy/backpressure</td><td>是否由 Sink 失败触发恢复？是否卡在 Checkpoint 或算子处理？</td></tr>
+              <tr><td>Kafka</td><td>各分区 lag、消费速率、offset 与重启后恢复位置</td><td>恢复期间是否持续积压？重启后是否从预期 checkpoint 位置继续？</td></tr>
+              <tr><td>MySQL</td><td>连接池等待、查询耗时、连接数、慢 SQL、CPU/IO</td><td>同步 enrichment 是否反压；是否由连接获取或 SQL 执行变慢导致？</td></tr>
+              <tr><td>Elasticsearch</td><td>Bulk 延迟、写入队列、rejected、节点 CPU/Heap/GC、服务端日志</td><td>集群是否过载、拒绝写入、单请求过大，或只是网络/代理没有及时响应？</td></tr>
+              <tr><td>应用指标</td><td><span class="metric">tagRelationBatchQueryCount</span>、失败计数、批量大小、查询/连接耗时；主流 submitted/buildFailed/skip 日志</td><td>submitted 只是交给 Connector，不是 ES 已确认写入；结合 Connector callback 与 ES 端指标判断。</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="engineering">
+        <h2><span class="num">10</span>方案亮点、难点与工作量</h2>
+        <div class="grid two">
+          <article class="card teal">
+            <span class="label">架构亮点</span>
+            <ul>
+              <li><strong>读写职责分离：</strong>复杂检索落在 ES 投影上，MySQL 仍是权威数据源。</li>
+              <li><strong>稳定键与快照更新：</strong>固定租户 ID 避免重复建文档；标签删除通过重查快照和空数组清除旧值。</li>
+              <li><strong>对标签更新做减载：</strong>先短窗口合并、再按 bucket 批查，减少重复 SQL。</li>
+              <li><strong>实时与回灌解耦：</strong>历史数据通过独立有界 Job 补齐，避免把批处理塞进实时 Topic。</li>
+            </ul>
+          </article>
+          <article class="card amber">
+            <span class="label">关键难点</span>
+            <ul>
+              <li>两个 Topic 对同一 ES 文档做不同字段的局部更新，需要处理事件顺序、重放和字段所有权。</li>
+              <li>Flink checkpoint 与 ES bulk 没有跨系统事务；失败后可能重放，需用确定性 ID、快照语义和监控降低风险。</li>
+              <li>标签流同时包含 keyed timer、MapState、批量 SQL、空快照清理与冲突重试，状态恢复和边界测试复杂。</li>
+              <li>ES Mapping、后端查询 DSL、回灌目标索引、API 字段契约要持续一致；Connector 的 ES7/ES8 兼容属于部署难点。</li>
+            </ul>
+          </article>
+        </div>
+        <h3>工作量估算（工程判断，不是项目工时记录）</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>阶段</th><th>参考人日</th><th>主要工作</th></tr></thead>
+            <tbody>
+              <tr><td>首版实现与集成</td><td><strong>15–25 人日</strong></td><td>CDC 接入与解析、主数据投影、标签状态合并和批查、ES Mapping/查询联调、历史回灌、基本测试与部署联调。</td></tr>
+              <tr><td>生产加固</td><td><strong>额外 5–10 人日</strong></td><td>端到端故障演练、Checkpoint/重放验证、容量和压测、Mapping 契约测试、超时/退避调优、监控告警与数据修复流程。</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="subtle small">估算假设：Kafka、MySQL、ES、Flink 集群和 Apollo 已可用，需求/查询契约稳定，开发者熟悉 Java/Flink；不包含平台基础设施采购、历史数据治理及跨团队排期等待。</p>
+      </section>
+
+      <section id="gaps">
+        <h2><span class="num">11</span>风险、差异与建议验证项</h2>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>级别</th><th>现状 / 风险</th><th>建议</th></tr></thead>
+            <tbody>
+              <tr>
+                <td><span class="tag risk">高</span></td>
+                <td>2026-10-27 发生 30 秒 ES Bulk 超时并伴随一次 Job full restart；当前证据无法区分 ES 性能、网络、代理或瞬时故障。</td>
+                <td>关联异常时间、ES 服务端 Bulk/线程池/GC、TaskManager 出站网络与代理日志；在证据明确前不要只靠扩大 timeout 或并行度掩盖问题。</td>
+              </tr>
+              <tr>
+                <td><span class="tag risk">高</span></td>
+                <td>主流使用部分更新；普通文本字段在源值为空时常被省略，ES 旧值可能残留。metadata 也采取缺失即不写。</td>
+                <td>定义字段清空语义；为“有值→null/空串/字段缺失”增加测试，必要时显式清空或改为带版本保护的完整替换。</td>
+              </tr>
+              <tr>
+                <td><span class="tag risk">高</span></td>
+                <td>实时主流已投影 metadata 派生字段，但 backfill SELECT 未包含 metadata；回灌无法补齐这些字段。回灌索引/批次与 README 仍不一致。</td>
+                <td>先统一实时与回灌投影、补充回灌参数校验，再对目标索引做 dry-run 与 mapping 检查。</td>
+              </tr>
+              <tr>
+                <td><span class="tag warn">中</span></td>
+                <td>数据集关系表变化、标签主表变化不会自动触发对应文档刷新；ES 读模型可能保留旧关系或旧标签定义。</td>
+                <td>评估关系表/标签表 CDC 扩展、按对象刷新任务、周期对账或版本化重建策略，并明确可接受的最终一致窗口。</td>
+              </tr>
+              <tr>
+                <td><span class="tag warn">中</span></td>
+                <td>README 写 Java 8、回灌 test 索引/批次 500；当前工作区 POM 为 Java 17，回灌常量为 stg 索引/批次 100。样例 Mapping 仍以 test 命名。</td>
+                <td>发布前统一 POM、README、运行镜像、提交命令和索引模板；区分“仓库样例”与“线上真实 Mapping”。</td>
+              </tr>
+              <tr>
+                <td><span class="tag warn">中</span></td>
+                <td>DATETIME 在 CDC 与 JDBC 回灌路径中分别编码/转换；回灌中间值再经过主 Sink 时间转换，存在时区语义二次处理的风险。</td>
+                <td>使用固定时区和已知 MySQL DATETIME 样本，分别验证 CDC、回灌写入 ES 的 epoch millis 与查询显示值。</td>
+              </tr>
+              <tr>
+                <td><span class="tag warn">中</span></td>
+                <td>ES Host 当前固定使用 HTTP，同时设置 Basic Auth。</td>
+                <td>确认网络隔离、TLS 终止及凭证传输边界；若需直连不可信网络，应改为 HTTPS 并验证证书。</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="callout">
+          <strong>规格对齐：</strong>
+          场景管理 API 已定义独立 ES 列表、标签值过滤、metadata 筛选和最终一致性边界；
+          Flink 负责形成可检索投影，但 API 契约本身不能证明目标索引 Mapping、线上数据和历史回灌已全部满足。
+        </div>
+      </section>
+
+      <section id="references">
+        <h2><span class="num">12</span>实现与规格索引</h2>
+        <div class="grid two">
+          <div class="card">
+            <h3>核心实现</h3>
+            <ul>
+              <li><a href="../src/main/java/com/nio/vmbc/data/flink/scenario/job/ScenarioDataBinlogConsumeRTJob.java">主数据实时作业编排</a></li>
+              <li><a href="../src/main/java/com/nio/vmbc/data/flink/scenario/job/ScenarioDataTagRelationConsumeRTJob.java">标签关系实时作业编排</a></li>
+              <li><a href="../src/main/java/com/nio/vmbc/data/flink/transform/ScenarioDataDebeziumTransform.java">Debezium 主数据解析</a> · <a href="../src/main/java/com/nio/vmbc/data/flink/transform/ScenarioDataDatasetRelationEnrichment.java">数据集关系补充</a></li>
+              <li><a href="../src/main/java/com/nio/vmbc/data/flink/transform/LatestTagRelationEventProcessFunction.java">标签事件合并</a> · <a href="../src/main/java/com/nio/vmbc/data/flink/transform/ScenarioDataTagRelationEnrichment.java">标签分桶批查</a></li>
+              <li><a href="../src/main/java/com/nio/vmbc/data/flink/source/ScenarioDataBackfillSource.java">回灌 Source</a> · <a href="../src/main/java/com/nio/vmbc/data/flink/config/ScenarioDataBackfillConfig.java">回灌常量</a></li>
+              <li><a href="../src/main/java/com/nio/vmbc/data/flink/sink/ScenarioDataEsSinkFactory.java">主数据 ES Sink</a> · <a href="../src/main/java/com/nio/vmbc/data/flink/sink/ScenarioDataTagRelationEsSinkFactory.java">标签 ES Sink</a></li>
+              <li><a href="../src/main/java/com/nio/vmbc/data/flink/config/ScenarioDataJobConfig.java">Apollo 配置默认值</a> · <a href="../pom.xml">Maven / 运行时依赖</a></li>
+            </ul>
+          </div>
+          <div class="card">
+            <h3>设计基线与部署资料</h3>
+            <ul>
+              <li><a href="../../vmbc-spec/01-iteration/scenario-management/scenario-management-api.md">场景管理 API：ES 查询契约</a></li>
+              <li><a href="../../vmbc-spec/01-iteration/scenario-management/scenario-management-data-model.md">场景管理数据模型</a> · <a href="../../vmbc-spec/01-iteration/scenario-management/scenario-management-sql.md">场景管理 SQL</a></li>
+              <li><a href="../../vmbc-spec/01-iteration/scenario-management/scenario-management-backend-design.md">场景管理后端设计</a></li>
+              <li><a href="../README.md">项目 README（需与当前 POM/常量复核）</a></li>
+              <li><a href="./es7-connector-es8-compat-fix.md">ES7 Connector 访问 ES8 的兼容说明</a></li>
+              <li><a href="../es/indexes/vmbc_data_be_7_test_scenario_data_query_v1.json">仓库 Mapping 样例（不代表线上 Mapping）</a></li>
+            </ul>
+          </div>
+        </div>
+        <p class="subtle small">本文为架构说明和代码快照记录，不代替部署变更单、线上 Apollo 配置、ES 实际 Mapping 或生产容量数据。代码路径均相对本 HTML 文件所在项目目录。</p>
+      </section>
+    </main>
+  </div>
+  <footer class="footer">vmbc-data-flink · Architecture &amp; Technical Design · 2026-10-27</footer>
+</div>
+</body>
+</html>

@@ -1,0 +1,532 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="基于 VMBC 产线调度后端当前实现与迭代规格整理的架构、数据流、可靠性、难点与工作量分析。">
+  <title>产线调度后端架构技术文档 · VMBC</title>
+  <style>
+    :root {
+      --ink: #142b2b;
+      --muted: #526967;
+      --paper: #f5f3ec;
+      --panel: #fffefa;
+      --line: #d7dfd7;
+      --green: #126b58;
+      --green-pale: #e1f0e8;
+      --orange: #bd5c31;
+      --orange-pale: #fff0e6;
+      --blue: #345d83;
+      --blue-pale: #eaf1f7;
+      --shadow: 0 16px 42px rgba(20, 43, 43, .08);
+      --serif: "Iowan Old Style", "Songti SC", "STSong", Georgia, serif;
+      --sans: "Avenir Next", "PingFang SC", "Microsoft YaHei", sans-serif;
+      --mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body { margin: 0; color: var(--ink); background: var(--paper); font: 15px/1.75 var(--sans); }
+    a { color: var(--green); text-decoration-thickness: 1px; text-underline-offset: 3px; }
+    .hero { position: relative; overflow: hidden; padding: 64px max(7vw, 24px) 48px; color: #f7f5eb; background: #153c38; }
+    .hero:before, .hero:after { content: ""; position: absolute; border: 1px solid rgba(218, 233, 204, .2); border-radius: 50%; pointer-events: none; }
+    .hero:before { width: 480px; height: 480px; right: -70px; top: -230px; box-shadow: 0 0 0 38px rgba(218,233,204,.035), 0 0 0 82px rgba(218,233,204,.035); }
+    .hero:after { width: 220px; height: 220px; right: 17%; bottom: -170px; box-shadow: 0 0 0 24px rgba(218,233,204,.04); }
+    .hero-inner { position: relative; z-index: 1; max-width: 1220px; margin: auto; }
+    .eyebrow { color: #b6d6c4; font-size: 12px; font-weight: 700; letter-spacing: .16em; text-transform: uppercase; }
+    h1 { max-width: 900px; margin: 15px 0 14px; font: 500 clamp(34px, 5vw, 58px)/1.2 var(--serif); letter-spacing: .015em; }
+    .hero p { max-width: 760px; color: #d7e4db; font-size: 16px; }
+    .hero-meta { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 28px; }
+    .pill { display: inline-block; padding: 4px 11px; border: 1px solid rgba(215,228,219,.34); border-radius: 999px; color: #e6eee8; font-size: 12px; }
+    .layout { display: grid; grid-template-columns: 245px minmax(0, 1fr); gap: 34px; max-width: 1440px; margin: 0 auto; padding: 34px 28px 80px; }
+    nav { position: sticky; top: 18px; align-self: start; max-height: calc(100vh - 36px); overflow: auto; padding: 20px 18px; border: 1px solid var(--line); border-radius: 14px; background: rgba(255,254,250,.78); }
+    nav strong { display: block; margin-bottom: 10px; color: var(--green); font-size: 12px; letter-spacing: .12em; }
+    nav a { display: block; padding: 5px 0; color: var(--muted); font-size: 12px; text-decoration: none; }
+    nav a:hover { color: var(--green); }
+    main { min-width: 0; }
+    section { scroll-margin-top: 24px; margin: 0 0 28px; padding: 29px 32px; border: 1px solid var(--line); border-radius: 16px; background: var(--panel); box-shadow: var(--shadow); }
+    h2 { display: flex; align-items: baseline; gap: 12px; margin: 0 0 19px; font: 600 25px/1.3 var(--serif); }
+    h2 .num { color: var(--orange); font: 600 12px var(--mono); }
+    h3 { margin: 25px 0 10px; color: #1c5149; font-size: 17px; }
+    h4 { margin: 18px 0 6px; font-size: 14px; }
+    p { margin: 9px 0; }
+    ul, ol { padding-left: 1.4em; }
+    li { margin: 4px 0; }
+    code, pre { font-family: var(--mono); }
+    code { padding: 1px 4px; border-radius: 4px; background: #edf2ec; color: #1d5047; font-size: .88em; overflow-wrap: anywhere; }
+    pre { overflow: auto; padding: 16px 18px; border: 1px solid #dbe4dc; border-radius: 10px; background: #f3f6f1; color: #183633; font-size: 12px; line-height: 1.6; }
+    .mermaid { overflow-x: auto; margin: 18px 0; padding: 18px 8px; border: 1px solid var(--line); border-radius: 12px; background: #fbfcf8; text-align: center; }
+    table { width: 100%; margin: 14px 0 20px; border-collapse: collapse; font-size: 13px; }
+    th, td { padding: 10px 11px; border: 1px solid var(--line); text-align: left; vertical-align: top; }
+    th { background: #eaf1e9; color: #214c44; font-weight: 700; }
+    tr:nth-child(even) td { background: #fcfcf8; }
+    .callout { margin: 16px 0; padding: 14px 17px; border-left: 4px solid var(--green); border-radius: 0 9px 9px 0; background: var(--green-pale); }
+    .warning { border-left-color: var(--orange); background: var(--orange-pale); }
+    .info { border-left-color: var(--blue); background: var(--blue-pale); }
+    .small { color: var(--muted); font-size: 12px; }
+    .tag { display: inline-block; margin-right: 4px; padding: 1px 7px; border-radius: 5px; background: #edf2ec; color: #31584e; font-size: 11px; white-space: nowrap; }
+    .two-col { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+    .card { padding: 15px; border: 1px solid var(--line); border-radius: 10px; background: #fcfcf8; }
+    .card h4 { margin-top: 0; }
+    .footer { max-width: 1440px; margin: -48px auto 0; padding: 0 28px 44px; color: var(--muted); font-size: 12px; }
+    @media (max-width: 900px) { .layout { grid-template-columns: 1fr; padding: 18px 14px 64px; } nav { position: relative; top: auto; max-height: none; columns: 2; } section { padding: 22px 19px; } .two-col { grid-template-columns: 1fr; } }
+    @media (max-width: 560px) { .hero { padding: 42px 20px 34px; } nav { columns: 1; } table { display: block; overflow-x: auto; white-space: normal; } h2 { font-size: 22px; } }
+    @media print { body { background: white; font-size: 11pt; } .hero { padding: 28px; print-color-adjust: exact; } .layout { display: block; padding: 20px 0; } nav { display: none; } section { box-shadow: none; break-inside: avoid; margin-bottom: 14px; } .mermaid { break-inside: avoid; } a { color: inherit; text-decoration: none; } }
+
+    body {
+      background:
+        radial-gradient(ellipse at 5% 0%, rgba(18, 107, 88, .10), transparent 34rem),
+        radial-gradient(ellipse at 100% 20%, rgba(189, 92, 49, .08), transparent 30rem),
+        var(--paper);
+    }
+    .hero {
+      background: linear-gradient(118deg, #123b38 0%, #17665a 58%, #315d72 100%);
+      box-shadow: 0 20px 52px rgba(20, 43, 43, .14);
+    }
+    .hero-inner { max-width: 1280px; }
+    .hero-meta { gap: 9px; }
+    .pill { backdrop-filter: blur(4px); }
+    .layout { max-width: 1500px; gap: 28px; }
+    nav { box-shadow: 0 8px 26px rgba(20, 43, 43, .045); }
+    section { box-shadow: 0 12px 32px rgba(20, 43, 43, .055); }
+    .mermaid { background: linear-gradient(145deg, #fbfcf8, #f3f7f1); }
+    .card { box-shadow: 0 5px 15px rgba(20, 43, 43, .035); }
+    .footer { max-width: 1500px; }
+    @media (max-width: 900px) {
+      .hero { padding-left: max(5vw, 22px); padding-right: max(5vw, 22px); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+    }
+    @media print {
+      section { box-shadow: none; }
+    }
+  </style>
+</head>
+<body>
+<header class="hero">
+  <div class="hero-inner">
+    <div class="eyebrow">VMBC · Backend Architecture · Iteration 04</div>
+    <h1>产线调度<br>后端技术设计总结</h1>
+    <p>基于 VMBC 后端当前实现与产线调度迭代规格整理。本文覆盖调度控制面、执行准入、Cron、上游 Fan-in、输出收口、可靠事件、通知、持久化、灰度与恢复；不涉及前端设计，也不把 NDSP 之外的 DAG 节点内部调度纳入调度域。</p>
+    <div class="hero-meta"><span class="pill">代码复核：2026-10-27</span><span class="pill">3 个 API Controller</span><span class="pill">7 个调度 NDSP Job</span><span class="pill">9 张调度表</span><span class="pill">36 个相关测试文件*</span><span class="pill">实现基线：vmbc-data-be</span></div>
+  </div>
+</header>
+<div class="layout">
+  <nav aria-label="目录">
+    <strong>CONTENTS</strong>
+    <a href="#summary">01 · 设计结论与范围</a>
+    <a href="#architecture">02 · 总体架构与边界</a>
+    <a href="#api">03 · 后端接口面</a>
+    <a href="#definition">04 · 调度定义与修订</a>
+    <a href="#parameters">05 · 参数绑定与模板</a>
+    <a href="#triggers">06 · 三类触发流程</a>
+    <a href="#cron">07 · Cron、Misfire 与并发</a>
+    <a href="#state">08 · Attempt 状态机</a>
+    <a href="#output">09 · 运行输出与终态</a>
+    <a href="#fanin">10 · 上游 Fan-in 编排</a>
+    <a href="#reliability">11 · Outbox、通知与幂等</a>
+    <a href="#storage">12 · 数据模型与事务</a>
+    <a href="#jobs">13 · NDSP、配置与监控</a>
+    <a href="#security">14 · 安全、租户与敏感信息</a>
+    <a href="#gaps">15 · 规格与代码差异</a>
+    <a href="#testing">16 · 测试与工程落位</a>
+    <a href="#engineering">17 · 架构亮点、难点与工作量</a>
+    <a href="#sources">18 · 依据与代码索引</a>
+  </nav>
+  <main>
+    <section id="summary">
+      <h2><span class="num">01</span>设计结论与范围</h2>
+      <p>产线调度是围绕现有 PipelineRuntime 建立的<strong>控制平面</strong>：负责形成触发事实、排队/准入、固定修订和参数快照、启动 Run，并将数据集输出和跨产线依赖收口为可审计的业务结果。真正的 DAG 执行仍由 <code>PipelineRuntimeOrchestrator</code> 及现有节点事件、轮询与物化链路负责。</p>
+      <div class="callout"><strong>核心原则：</strong>NDSP 只负责周期唤醒；MySQL 保存调度事实、游标、Attempt、租约和幂等约束。调度 Attempt 与 PipelineRun 分离；“DAG 完成”与“数据产出成功”分离；参数解析在持锁事务外完成，Run 创建及关键快照在事务内原子落库。</div>
+      <div class="two-col">
+        <div class="card"><h4>纳入范围</h4><p>调度 CRUD 与不可变 Revision、配置校验、Cron/Misfire、手动运行/历史重放、共享串行队列、Cron 并行策略、上游依赖与 Fan-in、输出结果、租约恢复、Outbox、通知、灰度及健康巡检。</p></div>
+        <div class="card"><h4>明确排除</h4><p>前端交互；Pipeline DAG 节点本身的状态轮询和算子调度；Canvas/FMS/Spark 的内部执行细节；与调度无关的 NDSP 任务。现有节点轮询等仅作为调度运行依赖说明。</p></div>
+      </div>
+      <p class="small">本文以代码现状为描述主线，并将规格要求与实现差异另行列出。规格目录 README 的“待实施”状态与当前代码事实不一致，不作为实现状态依据。</p>
+    </section>
+
+    <section id="architecture">
+      <h2><span class="num">02</span>总体架构与职责边界</h2>
+      <div class="mermaid">
+flowchart LR
+  API["Web Controller<br/>租户上下文 / 参数契约"] --> APP["Scheduling Services<br/>定义、校验、触发、历史"]
+  JOB["7 个 NDSP Job<br/>周期唤醒 / 有界批处理"] --> WORK["调度 Workers<br/>Cron / Dispatch / Recovery"]
+  APP --> DB[("MySQL 调度事实库<br/>Schedule / Revision / Attempt")]
+  WORK --> DB
+  WORK --> PARAM["模板解析 / 上游版本解析"]
+  PARAM --> LAUNCH["ScheduleAttemptRunLauncher<br/>原子创建 Attempt + Run"]
+  LAUNCH --> RT["PipelineRuntimeOrchestrator"]
+  RT --> DAG["既有 DAG Runtime<br/>NodeRun / Canvas / 状态轮询"]
+  DAG --> MAT["输出物化链路"]
+  MAT --> OUT["PipelineRunOutput<br/>物化业务结果"]
+  OUT --> BOX[("Domain Outbox")]
+  BOX --> FAN["Fan-in 消费 / 封口"]
+  BOX --> NT["NotificationTask / Lark Worker"]
+  FAN --> DB
+  NT --> LARK["Lark API"]
+  classDef primary fill:#dff0e7,stroke:#126b58,color:#142b2b;
+  classDef external fill:#eaf1f7,stroke:#345d83,color:#142b2b;
+  class DB,OUT,BOX primary;
+  class RT,DAG,MAT,LARK external;
+      </div>
+      <h3>主要组件</h3>
+      <table><thead><tr><th>层次</th><th>实现组件</th><th>职责</th></tr></thead><tbody>
+        <tr><td>Web 接入</td><td><code>PipelineScheduleController</code><br><code>PipelineScheduleAttemptController</code><br><code>PipelineScheduleValidationController</code></td><td>从登录上下文取租户/账号；做请求映射；调用 Service；不在 Controller 中实现调度业务规则。</td></tr>
+        <tr><td>定义管理</td><td><code>PipelineScheduleServiceImpl</code><br><code>PipelineScheduleValidationService</code><br><code>ScheduleSaveRequestService</code></td><td>CRUD、不可变修订、并发版本控制、保存幂等、参数/依赖校验、启停/删除。</td></tr>
+        <tr><td>执行控制</td><td><code>PipelineCronTriggerService</code><br><code>PipelineScheduleDispatcher</code><br><code>ScheduleAttemptRunLauncher</code></td><td>生成触发实例、认领等待项、完成并发准入、复用 Runtime 创建 PipelineRun。</td></tr>
+        <tr><td>链路收口</td><td><code>PipelineRunOutputService</code><br><code>DomainOutboxPublisher</code><br><code>PipelineFanInWriter</code></td><td>持久化输出结果、可靠投递领域事件、聚合上游并创建下游 Attempt。</td></tr>
+        <tr><td>可靠性与观测</td><td><code>PipelineScheduleRecoveryService</code><br><code>NotificationDispatcher</code><br><code>ScheduleHealthInspector</code></td><td>恢复租约/状态，发送独立通知任务，巡检队列、物化、事件和通知积压。</td></tr>
+      </tbody></table>
+      <div class="callout info"><strong>NDSP 定位：</strong>7 个新调度入口以 Job 方式注册，但正确性不依赖 NDSP 恰好触发一次。重复唤醒靠数据库唯一键、CAS 游标、事务与租约收敛；NDSP 当前确认为单例触发，因此所有 Worker 仍限制批量与单轮墙钟时间。</div>
+    </section>
+
+    <section id="api">
+      <h2><span class="num">03</span>后端接口面</h2>
+      <p>统一前缀为 <code>/api/v1/pipeline/schedules</code>。以下按用途列出实际 Controller 暴露的入口；请求体字段以对应 DTO 为准。</p>
+      <table><thead><tr><th>用途</th><th>方法与路径</th><th>行为摘要</th></tr></thead><tbody>
+        <tr><td>调度列表/总览</td><td><code>GET /</code><br><code>GET /overview</code></td><td>租户内分页、筛选；总览统计近期运行和失败概况。</td></tr>
+        <tr><td>创建/编辑</td><td><code>POST /</code><br><code>PUT /{scheduleId}</code></td><td>要求 <code>Idempotency-Key</code>；创建首个修订或根据配置变更生成新修订。</td></tr>
+        <tr><td>启停/删除</td><td><code>PATCH /{scheduleId}/enabled</code><br><code>DELETE /{scheduleId}?expectedRowVersion=…</code></td><td>启停不产生新 Revision；删除检查活动 Attempt 后逻辑删除并保留审计事实。</td></tr>
+        <tr><td>详情/修订</td><td><code>GET /{scheduleId}</code><br><code>GET /{scheduleId}/revisions</code><br><code>GET /{scheduleId}/revisions/{revisionId}</code></td><td>查看主档、当前/历史不可变配置快照与修订列表。</td></tr>
+        <tr><td>预校验与预览</td><td><code>POST /validate</code><br><code>POST /preview-cron</code><br><code>POST /preview-parameters</code><br><code>POST /validate-dependencies</code></td><td>校验草稿、预览 Cron 下一次触发、模拟模板、检查依赖环。</td></tr>
+        <tr><td>依赖上下文</td><td><code>GET /dependency-graph</code><br><code>GET /options/pipelines</code><br><code>GET /options/pipelines/{pipelineId}/versions/{versionId}/context</code></td><td>读取依赖关系、可选 Pipeline/版本及算子参数 Schema Context。</td></tr>
+        <tr><td>执行与历史</td><td><code>POST /{scheduleId}/run</code><br><code>POST /{scheduleId}/attempts/{attemptId}/replay</code></td><td>立即执行当前修订；或按历史 Attempt 的快照/修订重放并生成新 Attempt。</td></tr>
+        <tr><td>队列与 Attempt</td><td><code>GET /{scheduleId}/attempts</code><br><code>GET /{scheduleId}/attempts/{attemptId}</code><br><code>GET /{scheduleId}/queue</code></td><td>分页历史、实例详情/Manifest、共享队列位置与占用来源。</td></tr>
+        <tr><td>取消等待项</td><td><code>POST /{scheduleId}/attempts/{attemptId}/cancel</code><br><code>POST /{scheduleId}/attempts/cancel-waiting</code></td><td>仅对 WAITING 实例做 CAS 取消；已 PREPARING 或运行中的项不可取消。</td></tr>
+      </tbody></table>
+      <p>写请求从认证上下文获取租户和操作人，不接受客户端覆盖租户字段；数据查询携带 <code>lesseeCode</code>。跨租户资源通常按不存在处理。创建/编辑先预校验只为快速反馈，保存事务会再次做权威校验和唯一绑定门禁。</p>
+    </section>
+
+    <section id="definition">
+      <h2><span class="num">04</span>调度定义、修订与生命周期</h2>
+      <h3>主档与不可变 Revision</h3>
+      <p><code>PipelineSchedule</code> 是长期稳定的调度身份，包含租户、业务 ID、名称、启停、当前修订指针、Cron 游标、<code>rowVersion</code> 和审计字段。<code>PipelineScheduleRevision</code> 固定绑定一组 <code>pipelineId + pipelineVersionId</code>，保存触发类型、时区、Cron/并发/Misfire 设置、依赖、参数模板、标准化 JSON 快照及 Hash，并具有 <code>effectiveFrom/effectiveTo</code>。</p>
+      <p>配置变更新增 Revision 并切换主档指针，不回写旧配置。Attempt 创建时记录其 Revision 和配置 Hash；已经排队的 Attempt 因此不会被后续编辑改写。名称单独变更不需要新修订；启停也只更新主档。重复编辑由 <code>rowVersion</code> 乐观锁防护。</p>
+      <h3>创建/编辑时的校验要点</h3>
+      <ul>
+        <li>租户有效产线及具体版本存在；同租户同产线版本只允许一个未删除调度绑定。保存时再锁目标 Pipeline 并检查，避免并发配置竞争。</li>
+        <li>触发类型字段组合合法：MANUAL 不做自动触发；CRON 配 Cron、并发策略及 Misfire；UPSTREAM 配上游依赖、Correlation 表达式及版本策略。</li>
+        <li>依赖别名和上游产线不重复；禁止自依赖、错误版本引用和有向环。并发编辑环检测按稳定顺序锁相关调度主档。</li>
+        <li>参数节点/路径根据指定版本及算子 Schema 绑定；类型、标签、敏感标记等由服务端固化，不信任客户端传来的显示属性。</li>
+        <li>修改生效边界关闭旧 Revision 的 <code>effectiveTo</code>，延迟到达的上游事件仍按其业务时间路由至正确历史修订。</li>
+      </ul>
+      <h3>启停与删除</h3>
+      <ul>
+        <li>启用 CRON 时，以数据库当前时间初始化 <code>lastEvaluatedFireAt</code>，并计算严格晚于当前时间的下一个触发点；停用期间不积累 Misfire。</li>
+        <li>停用阻止新的自动触发和立即运行，但不自动取消既有 WAITING 项；需要显式取消队列。当前代码停用时关闭 OPEN Fan-in。</li>
+        <li>删除为逻辑删除。存在 WAITING、PREPARING、RUNNING 或 MATERIALIZING Attempt 时拒绝删除；历史 Attempt、Revision 等记录保留。</li>
+      </ul>
+      <div class="callout warning"><strong>状态口径提醒：</strong>调度“停用”不是“清空队列”，现有等待实例仍可由 Dispatcher 执行。批量取消接口是独立操作，需在运维/调用流程中考虑。</div>
+    </section>
+
+    <section id="parameters">
+      <h2><span class="num">05</span>参数绑定、模板解析与 Manifest</h2>
+      <h3>静态参数覆盖模型</h3>
+      <p>调度不修改版本节点定义。执行前读取所选不可变 Pipeline 版本的节点静态 JSON 参数，以 <code>nodeId + parameterPath</code>（RFC 6901 JSON Pointer）定位字段；将解析后的值按声明类型转换并覆盖，未配置的节点/字段继续使用版本静态默认值。数组只支持根路径整体覆盖，不支持数组元素路径覆盖。</p>
+      <table><thead><tr><th>模板类别</th><th>格式/语义</th><th>示例</th></tr></thead><tbody>
+        <tr><td>时间变量</td><td>基础量 <code>triggerTime</code> / <code>now</code>；支持按书写顺序做天/小时偏移，参数化 date/hour 格式。</td><td><code>{{triggerTime - 1d + 2h}}</code><br><code>{{date(triggerTime - 1d)}}</code><br><code>{{hour(now)}}</code></td></tr>
+        <tr><td>上游变量</td><td>已配置别名下的 <code>datasetId</code>、<code>version</code>、<code>runId</code>。</td><td><code>{{upstreams.source.datasetId}}</code></td></tr>
+        <tr><td>类型转换</td><td>String 保留文本；number/integer/boolean/array/object 转为真实 JSON 类型，并按完整节点 Schema 校验。</td><td><code>valueType=object</code> 时产出对象而非 JSON 字符串。</td></tr>
+      </tbody></table>
+      <p>保存阶段由 <code>ScheduleParameterBindingService</code> 基于版本 Context 绑定节点与 Schema、规范化路径、校验重复绑定和模板格式。可由时间上下文静态验证的模板会模拟解析并验证完整节点配置；依赖上游值的模板延迟到运行时解析。预览为模拟，不等于未来上游一定能解析。</p>
+      <h3>上游版本绑定策略</h3>
+      <table><thead><tr><th>策略</th><th>含义</th><th>适用</th></tr></thead><tbody>
+        <tr><td><code>PINNED</code></td><td>引用配置时固定的数据集版本。</td><td>输入必须可重复定位到指定版本。</td></tr>
+        <tr><td><code>CURRENT_VERSION</code></td><td>使用数据集当前版本。</td><td>手动触发等非事件绑定场景。</td></tr>
+        <tr><td><code>LATEST_RUN</code></td><td>依业务时间选取对应上游产线版本下最近成功物化输出。</td><td>按业务批次取最近已产出结果。</td></tr>
+        <tr><td><code>TRIGGERED_RUN</code></td><td>使用本次上游 Fan-in 当前成员所关联的 Run/数据集版本。</td><td>严格沿上游事件传递该批次数据；重评估/立即运行需要显式绑定上下文。</td></tr>
+      </tbody></table>
+      <p>required 上游解析失败会阻止下游运行；optional 上游解析失败不以空值覆盖目标参数，继续沿用静态默认值。运行前解析器会确认 required 版本并写入解析事实。</p>
+      <h3>运行 Manifest</h3>
+      <p>真正创建 Run 时，Attempt 固化：<code>templateSource</code>、<code>resolvedOverrides</code>、<code>finalNodeParams</code>、<code>upstreamResolution</code> 和 <code>manifestHash</code>。Runtime 用有效参数构造 NodeRun；未覆盖节点从版本静态参数读取。该快照支撑审计和精确重放。</p>
+      <div class="callout info"><strong>解析与事务分离：</strong>较重的节点查询、模板渲染、上游版本解析及类型校验在写事务/行锁外完成。随后在 Launcher 事务中重新确认 Revision 指针（立即运行/普通派发）或按历史 Revision 特例放行（Replay），再行锁准入和原子创建。</div>
+    </section>
+
+    <section id="triggers">
+      <h2><span class="num">06</span>三类触发流程</h2>
+      <div class="mermaid">
+sequenceDiagram
+  autonumber
+  participant N as NDSP / API
+  participant S as Schedule Service
+  participant M as MySQL
+  participant P as Parameter Resolver
+  participant L as Launcher
+  participant R as Pipeline Runtime
+  participant O as Output / Outbox
+  N->>S: Cron scan / 立即运行 / Fan-in 派发
+  S->>M: 读取 Schedule + 固定 Revision
+  S->>P: 锁外解析参数与上游输入
+  P-->>S: 有效节点参数 + Manifest
+  S->>L: 创建/派发 Attempt
+  L->>M: 开事务、锁 Pipeline、检查资源/修订
+  L->>R: startRun(command)
+  R->>M: 写 PipelineRun + NodeRun
+  L->>M: 写 Manifest、RunOutput 初始行、Attempt-run 关联
+  M-->>L: COMMIT
+  R-->>N: 提交后开始 DAG 执行
+  R->>O: DAG 完成后物化并终态收口
+      </div>
+      <div class="two-col">
+        <div class="card"><h4>MANUAL / 立即运行</h4><p>Controller 调用 Service，同步锁外解析当前 Revision；之后 Launcher 在事务内锁 Pipeline 并检查活动运行，创建 Attempt、Run、NodeRun、RunOutput 和关联。忙碌返回冲突，不排队；立即运行类型记为 <code>MANUAL_OVERRIDE</code>。不改 Cron 游标。</p></div>
+        <div class="card"><h4>CRON</h4><p>扫描器按数据库时间取到期主档，逐个进入事务处理游标和触发实例；QUEUE 建 WAITING，SKIP 建带租约 PREPARING 并提交后直发。Dispatcher 对排队项认领并启动。</p></div>
+        <div class="card"><h4>UPSTREAM</h4><p>仅在上游 RunOutput 形成终态事实后由 Outbox 事件驱动。Fan-in 满足条件并封口后创建下游 WAITING Attempt；后续 Dispatcher 负责启动。Fan-in 失败时创建跳过 Attempt。</p></div>
+        <div class="card"><h4>REPLAY</h4><p>创建全新 Attempt，不改来源记录。<code>EXACT_SNAPSHOT</code> 复用来源有效节点参数和 Manifest；<code>REEVALUATE</code> 按来源 Revision 重新解析。重放在 Launcher 中不要求来源 Revision 是当前指针。</p></div>
+      </div>
+    </section>
+
+    <section id="cron">
+      <h2><span class="num">07</span>Cron、Misfire 与并发控制</h2>
+      <h3>Cron 游标原子推进</h3>
+      <ol>
+        <li>cron-scan 读取 DB_NOW 和有限批次到期调度（<code>next_fire_at &lt;= DB_NOW</code>）。租户未放量时不推进游标，避免放量后静默丢失触发点。</li>
+        <li>加载主档当前 Revision 并解析五字段 Crontab。支持通配、数字、列表、区间、步长组合；不支持秒、年、Quartz 扩展字符或宏。</li>
+        <li>以游标区间枚举计划时间，最多 500 个/调度/轮；不超过 60 秒延迟按正常触发。超过阈值为 Misfire。</li>
+        <li>在同一事务中 CAS 更新 <code>lastEvaluatedFireAt/nextFireAt</code> 并创建触发 Attempt；游标推进失败表示其他轮次已处理，放弃本次。</li>
+        <li><code>scheduleId + triggerKey</code> 唯一索引是防重复的最终保障；重复唤醒插入冲突按幂等成功处理。</li>
+      </ol>
+      <table><thead><tr><th>配置/策略</th><th>代码行为</th></tr></thead><tbody>
+        <tr><td>并发 <code>SKIP</code></td><td>“跳过排队、允许同版本并行”，不是跳过本次。Cron 事务生成 PREPARING 和租约，提交后直发；不受等待队列容量限制。内部 Runtime 命令仅对此 Cron 路径豁免活动运行门禁，但仍持 Pipeline 行锁。</td></tr>
+        <tr><td>并发 <code>QUEUE</code></td><td>每个触发点建立 WAITING，按触发时间 FIFO；每调度最多 100 个 WAITING，满额创建 <code>SKIPPED/QUEUE_FULL</code> 并告警。</td></tr>
+        <tr><td>Misfire <code>SKIP</code></td><td>每个漏跑计划点留一条 <code>SKIPPED/MISFIRE_SKIP</code> 审计记录，不补跑。</td></tr>
+        <tr><td>Misfire <code>FIRE_ONCE</code></td><td>最近 24 小时漏跑合并为一个补跑 Attempt，使用最近漏跑点作业务 triggerTime；24 小时外记录 <code>MISFIRE_OUT_OF_WINDOW</code>。单轮枚举受 500 点上限约束。</td></tr>
+      </tbody></table>
+      <h3>统一并发维度与最终门禁</h3>
+      <p>串行准入按 <code>(tenant, pipelineId, pipelineVersionId)</code>，所以同一版本跨不同 Schedule 共享队列，不同版本可并行。PipelineRun 的 <code>PENDING/RUNNING/PAUSED</code> 与 Attempt 的 <code>PREPARING</code> 均视为占用。Dispatcher 的忙闲预检只是减少无效认领；最终门禁由 <code>PipelineRuntimeOrchestrator</code> 持有 Pipeline 行锁完成，防止两个入口同时检查空闲后双启动。</p>
+      <p>Dispatcher 对候选按并发维度去重，仅保留队首；Cron-SKIP 不参与同维度去重。租约 token 是 fencing 条件：过期执行上下文无法写入 Manifest/Run 关联。QUEUE 启动时若最终门禁发现资源被抢占，释放租约退回 WAITING，而不是误报参数失败。</p>
+      <div class="callout warning"><strong>时区实现注意：</strong>Revision 默认保存 <code>Asia/Shanghai</code>，Cron 计算使用 <code>LocalDateTime</code>；触发键 Epoch 秒转换读取 JVM 默认 <code>ZoneId.systemDefault()</code>。代码调用未显式把 Revision 时区传入 Cron 解析器，因此部署 JVM 时区必须核实为与业务配置一致，否则时间展示/触发键可能出现偏差。</div>
+    </section>
+
+    <section id="state">
+      <h2><span class="num">08</span>Attempt 状态机与运行状态隔离</h2>
+      <div class="mermaid">
+stateDiagram-v2
+  [*] --> WAITING: QUEUE / UPSTREAM
+  [*] --> PREPARING: CRON-SKIP / 立即运行
+  WAITING --> PREPARING: Dispatcher 认领
+  WAITING --> SKIPPED: Misfire / 队列满 / 上游失败
+  WAITING --> CANCELLED: 用户 CAS 取消
+  PREPARING --> RUNNING: Attempt + PipelineRun 原子创建
+  PREPARING --> WAITING: 租约超时且尚无 Run
+  PREPARING --> RUNNING: 租约超时但 Run 已存在
+  PREPARING --> FAILED: 参数解析/启动失败
+  RUNNING --> MATERIALIZING: DAG 成功且输出需物化
+  RUNNING --> COMPLETED: 输出终态成功 / 无需物化
+  RUNNING --> FAILED: DAG 失败
+  MATERIALIZING --> COMPLETED: MATERIALIZED / NO_VALID_DATA / NOT_APPLICABLE
+  MATERIALIZING --> FAILED: 输出物化最终失败
+  COMPLETED --> [*]
+  FAILED --> [*]
+  SKIPPED --> [*]
+  CANCELLED --> [*]
+      </div>
+      <p><code>PREPARING</code> 表示已认领/解析/建 Run 的内部阶段；<code>MATERIALIZING</code> 表示 DAG 已终态但输出业务结果尚未收口。API 内部状态准确返回，展示态会将 PREPARING 并入 WAITING、MATERIALIZING 并入 RUNNING。WAITING/PREPARING 等调度控制状态不加入 PipelineRun 枚举。</p>
+      <p>对已过期 PREPARING 租约：如果尚无 <code>pipelineRunId</code>，恢复为 WAITING 重新派发；如果 Run 已创建，校准为 RUNNING。Recovery 另行检查 RUNNING 对应 Run 已终态的滞后状态。恢复操作按条件更新保持幂等。</p>
+    </section>
+
+    <section id="output">
+      <h2><span class="num">09</span>PipelineRun 输出业务结果收口</h2>
+      <p>启动事务先写唯一的 <code>PipelineRunOutput</code> 占位行（通知接收人及 Pipeline/版本快照）。DAG 执行和数据集物化完成后，输出服务把物化结果作为稳定业务事实保存，并推进关联 Attempt。</p>
+      <table><thead><tr><th>RunOutput outcome</th><th>含义</th><th>Attempt 结果</th></tr></thead><tbody>
+        <tr><td><code>MATERIALIZED</code></td><td>输出成功生成 DatasetVersion。</td><td><code>COMPLETED</code></td></tr>
+        <tr><td><code>NO_VALID_DATA</code></td><td>无有效输出数据。</td><td>按业务成功收口，输出 outcome 保留为空数据事实。</td></tr>
+        <tr><td><code>NOT_APPLICABLE</code></td><td>产线没有适用输出节点。</td><td>按业务成功收口。</td></tr>
+        <tr><td><code>FAILED</code></td><td>DAG 执行失败或物化最终失败。</td><td><code>FAILED</code>，携带稳定原因码。</td></tr>
+      </tbody></table>
+      <p>输出的过程状态为 <code>NOT_REQUESTED / PENDING / MATERIALIZING / TERMINAL</code>。DAG COMPLETED 不代表数据已成功物化；反之物化失败也不反向改写成功完成的 PipelineRun。直接运行没有 ScheduleAttempt，仍写 RunOutput 并能产生通知/上游事件。</p>
+      <p>输出结果状态推进、调度 Attempt 终态及 <code>PIPELINE_OUTPUT_TERMINAL</code>、<code>SCHEDULE_ATTEMPT_TERMINAL</code> Outbox 写入按同一领域事务组织。终态 CAS 未命中不重复发出不匹配的终态事件。</p>
+    </section>
+
+    <section id="fanin">
+      <h2><span class="num">10</span>上游 Fan-in 与下游编排</h2>
+      <div class="mermaid">
+flowchart TD
+  E["PipelineRunOutput terminal event"] --> ROUTE["按租户 + 上游 Pipeline/版本<br/>业务时间匹配有效 Revision"]
+  ROUTE --> KEY["解析 correlationExpression<br/>得到 correlationKey"]
+  KEY --> AGG["锁定/创建 FanIn<br/>revisionId + correlationKey"]
+  AGG --> MEMBER["插入 append-only 成员<br/>aggregationId + eventId 幂等"]
+  MEMBER --> PTR["按业务时间/eventId<br/>更新每个依赖的 current 成员"]
+  PTR --> DECIDE{"required / optional 收敛判断"}
+  DECIDE -->|required 全成功| READY["readyAt = now + 300s"]
+  DECIDE -->|required 明确失败| FAIL["FAILED 封口"]
+  READY --> SEAL["FanIn Seal Job 到期复核"]
+  SEAL --> SAT["SATISFIED 封口 + 下游 WAITING Attempt"]
+  FAIL --> SKIP["FAILED 封口 + SKIPPED Attempt"]
+  FAIL --> FIX{"required 后续是否全部修复"}
+  FIX -->|是且 Schedule 启用| REOPEN["roundNo + 1，重开并补建下游 Attempt"]
+  FIX -->|否| KEEP["保持 FAILED，仅追加成员"]
+      </div>
+      <ul>
+        <li>触发源是 <code>PIPELINE_OUTPUT_TERMINAL</code>，不是 DAG 完成事件，避免下游拿到尚未落地的数据集版本。</li>
+        <li>按事件业务时间找生效中的下游 Revision，再通过依赖反向索引定位依赖别名、上游具体版本及 REQUIRED/OPTIONAL 属性。匹配不到、调度停用/删除或超出保留窗口（默认 7 天）会记录丢弃原因，不创建不可靠批次。</li>
+        <li>聚合唯一维度为租户、Revision、Correlation Key；成员 append-only，以聚合行锁保护当前成员指针。一个依赖多个事件按 <code>(businessTriggerTime,eventId)</code> 选最新，同时保留历史事件。</li>
+        <li>required 全部物化成功后启动默认 300 秒收敛期；全 optional 依赖则在首个终态成员到达时启动同一收敛期。封口时再读取当前成员并复核，降低 Outbox 到达乱序影响。</li>
+        <li>required 失败/无数据会失败封口并创建 <code>SKIPPED/REQUIRED_UPSTREAM_FAILED</code>；Fan-in 失败状态可在全部 required 当前成员修复后增加轮次重开并自动补跑。已经 SATISFIED 的批次不会重复触发。</li>
+        <li>下游参数策略使用聚合成员提供的上游解析事实。required 无法可靠解析时拒绝启动；optional 不覆盖目标参数，采用静态默认值。</li>
+      </ul>
+      <p class="small">Fan-in record-only 模式下仍执行聚合与封口但跳过创建下游 Attempt，用于核验 Correlation Key。版本变化后旧 Revision 已建立的 OPEN 聚合仍按原修订收口，不将新事件混入新旧快照。</p>
+    </section>
+
+    <section id="reliability">
+      <h2><span class="num">11</span>Outbox、通知、租约与幂等</h2>
+      <h3>事务 Outbox</h3>
+      <p>业务事务内同时提交事实更新与 Outbox 事件，避免业务数据已提交、进程却在发消息前崩溃。Publisher 扫描有限候选，以 CAS 租约认领，调用唯一注册的 Handler 后标记发布；异常按指数退避，最多 8 次后 FAILED。未知事件类型作为死信；已知但暂时没有 Handler 的事件不认领，避免耗尽重试。</p>
+      <h3>通知任务</h3>
+      <p>终态 Handler 只在需要通知的结果创建 NotificationTask；通知调用在提交后由独立 Worker 投递飞书，不把外部网络请求放进业务事务。成功、运行失败以及 required 上游失败跳过会发通知；普通配置跳过及用户取消不打扰。接收人以 Pipeline Owner 快照为主、管理员群为兜底，卡片快照用于稳定重试。</p>
+      <p>通知失败重试固定为首次发送后 1、5、15 分钟，最多总计 4 次。飞书请求使用通知任务 ID 作为服务侧 UUID 去重键。通知 DEAD 只告警，不改变 PipelineRun 或 Attempt 的终态；dry-run 模式模拟成功收口，避免关闭演练后旧任务突然群发。</p>
+      <table><thead><tr><th>对象</th><th>数据库幂等/竞争保护</th><th>租约/重试</th></tr></thead><tbody>
+        <tr><td>Cron Attempt</td><td><code>(tenant,scheduleId,triggerKey)</code> 唯一；游标 CAS。</td><td>SKIP 直发和 Dispatcher 使用 lease token。</td></tr>
+        <tr><td>Outbox</td><td>全局唯一 <code>eventId</code>；Handler 由领域唯一键去重。</td><td>token + expiresAt；5 秒起指数退避，封顶 600 秒，最多 8 次。</td></tr>
+        <tr><td>Fan-in</td><td><code>(tenant,revisionId,correlationKey)</code> 唯一；成员以聚合+eventId 唯一。</td><td>行锁保证 current 指针和封口/Attempt 同事务。</td></tr>
+        <tr><td>RunOutput</td><td><code>(tenant,pipelineRunId)</code> 唯一；终态不能覆盖。</td><td>事务内与 Attempt 状态和 Outbox 同步推进。</td></tr>
+        <tr><td>Notification</td><td><code>(tenant,idempotencyKey)</code> 唯一。</td><td>token + expiresAt；固定 1/5/15 分钟重试。</td></tr>
+      </tbody></table>
+    </section>
+
+    <section id="storage">
+      <h2><span class="num">12</span>数据模型与事务设计</h2>
+      <p>调度域使用 9 张表，按事实职责分组。参数模板直接放 Revision JSON，运行 Manifest 内嵌 Attempt，不额外拆表。</p>
+      <table><thead><tr><th>表</th><th>核心职责</th><th>关键约束/读写说明</th></tr></thead><tbody>
+        <tr><td><code>vmbc_pipeline_schedule</code></td><td>稳定调度身份、启停、当前修订指针、Cron 游标。</td><td>租户内业务 ID 和有效名称唯一；逻辑删除；rowVersion。</td></tr>
+        <tr><td><code>vmbc_pipeline_schedule_revision</code></td><td>不可变完整配置、版本绑定、Hash、生效区间。</td><td>调度内修订号唯一；绑定 Pipeline 版本；历史快照不可变。</td></tr>
+        <tr><td><code>vmbc_pipeline_schedule_dependency</code></td><td>依赖反向索引、别名、上游版本与 required/optional。</td><td>Revision 内别名与上游 Pipeline 去重；按上游版本高效查下游。</td></tr>
+        <tr><td><code>vmbc_pipeline_schedule_attempt</code></td><td>触发/等待/运行/取消/结果全量台账，保存 Manifest 与 lease。</td><td>租户+schedule+triggerKey 幂等；Attempt 与 PipelineRun 可空关联。</td></tr>
+        <tr><td><code>vmbc_pipeline_run_output</code></td><td>Run 输出物化状态/outcome、DatasetVersion 与通知 Owner 快照。</td><td>租户+Run 唯一；状态唯一事实来源。</td></tr>
+        <tr><td><code>vmbc_pipeline_fan_in</code></td><td>一个下游修订在一个业务批次的聚合头、收敛期、封口轮次。</td><td>租户+Revision+Correlation Key 唯一。</td></tr>
+        <tr><td><code>vmbc_pipeline_fan_in_member</code></td><td>上游事件 append-only 明细及当前成员指针。</td><td>聚合+事件幂等；聚合+依赖+isCurrent 保证一个当前成员。</td></tr>
+        <tr><td><code>vmbc_domain_outbox</code></td><td>事务领域事件与发布/失败/重试状态。</td><td>唯一 eventId；status/nextAttempt/lease 索引支撑 Worker。</td></tr>
+        <tr><td><code>vmbc_notification_task</code></td><td>脱敏通知卡片快照、接收人、发送状态和错误信息。</td><td>租户+通知 ID、租户+业务幂等键唯一。</td></tr>
+      </tbody></table>
+      <h3>关键事务边界</h3>
+      <table><thead><tr><th>事务</th><th>事务内必须原子完成</th><th>事务外动作</th></tr></thead><tbody>
+        <tr><td>创建/编辑</td><td>锁定目标 Pipeline/调度主档；权威校验；写 Revision/Dependency；关旧生效区间；CAS 切换指针与游标。</td><td>配置预览只读，不替代本事务。</td></tr>
+        <tr><td>Cron 单个调度</td><td>游标 CAS 与计划触发 Attempt（含 SKIP 的准备态）。</td><td>SKIP 事件在事务提交后启动解析/Launcher。</td></tr>
+        <tr><td>启动 Run</td><td>锁 Schedule、检查 Revision；锁 Pipeline；插 Attempt（或验证派发 lease）；Runtime 建 Run/NodeRun；写 Manifest、RunOutput 初始行、Attempt-run 关联。</td><td>节点执行事件只在提交后发送。</td></tr>
+        <tr><td>输出收口</td><td>RunOutput 终态、Attempt 终态与终态 Outbox 同事务。</td><td>Outbox Worker 后续消费。</td></tr>
+        <tr><td>Fan-in 消费/封口</td><td>锁聚合、成员写入/current 指针、判定/封口、创建下游 Attempt。</td><td>Dispatcher 后续启动下游运行。</td></tr>
+        <tr><td>通知创建与发送</td><td>事件 Handler 以唯一键创建 NotificationTask。</td><td>Notification Worker 访问 Lark；失败仅更新通知任务。</td></tr>
+      </tbody></table>
+    </section>
+
+    <section id="jobs">
+      <h2><span class="num">13</span>NDSP Job、灰度配置与健康监控</h2>
+      <p>代码当前注册 7 个调度 Job。表中频率取各 Job 注释/迁移设计建议，不是后端自行调度的频率；运维需在 NDSP 注册。配置默认值来自服务内 <code>@Value</code>，Apollo 可覆盖。</p>
+      <table><thead><tr><th>NDSP Job</th><th>职责</th><th>建议频率</th><th>代码默认有界参数</th></tr></thead><tbody>
+        <tr><td><code>ndspPipelineScheduleCronScanJob</code></td><td>扫描到期 Cron、生成 Attempt、推进游标。</td><td>10–30 秒</td><td>200 个调度；30 秒。</td></tr>
+        <tr><td><code>ndspPipelineScheduleDispatchJob</code></td><td>认领 WAITING、校验并启动 Run。</td><td>5–10 秒</td><td>50 个并发维度；30 秒；候选倍率 10；租约 30 秒。</td></tr>
+        <tr><td><code>ndspPipelineScheduleOutboxJob</code></td><td>投递领域事件；附带积压检查。</td><td>5–10 秒</td><td>200 条；30 秒；租约 30 秒；最多 8 次。</td></tr>
+        <tr><td><code>ndspPipelineScheduleFanInSealJob</code></td><td>扫描到期 Fan-in 聚合并封口。</td><td>10–30 秒</td><td>200 个；30 秒。</td></tr>
+        <tr><td><code>ndspPipelineScheduleRecoveryJob</code></td><td>回收过期 PREPARING 租约、校准运行状态。</td><td>1–5 分钟（Job 注释）</td><td>200 条；60 秒。</td></tr>
+        <tr><td><code>ndspPipelineScheduleNotificationJob</code></td><td>投递通知与重试。</td><td>30–60 秒（Job 注释）</td><td>100 条；30 秒；租约 60 秒。</td></tr>
+        <tr><td><code>ndspPipelineScheduleHealthJob</code></td><td>只读巡检，指标与告警。</td><td>60 秒</td><td>阈值：队列 1800 秒；物化停滞 3600 秒；Outbox 1000 条/300 秒；通知窗口 24 小时。</td></tr>
+      </tbody></table>
+      <h3>灰度/故障快速开关</h3>
+      <table><thead><tr><th>配置项</th><th>默认值</th><th>作用</th></tr></thead><tbody>
+        <tr><td><code>pipeline.schedule.enabled</code></td><td>false</td><td>总开关；关闭调度自动动作，不影响已有直接 PipelineRun。</td></tr>
+        <tr><td><code>pipeline.schedule.tenant-whitelist</code></td><td>空</td><td>逗号分隔租户白名单；总开关优先。</td></tr>
+        <tr><td><code>pipeline.schedule.trigger-types</code></td><td>空</td><td>触发类型过滤；空表示总开关下全部开启。</td></tr>
+        <tr><td><code>pipeline.schedule.cron.shadow-mode</code></td><td>false</td><td>推进 Cron 计算游标但不创建触发 Attempt，用于对表触发时间。</td></tr>
+        <tr><td><code>pipeline.schedule.fan-in.record-only</code></td><td>false</td><td>正常聚合/封口，跳过下游 Attempt 创建。</td></tr>
+        <tr><td><code>pipeline.schedule.notification.dry-run</code></td><td>false</td><td>通知任务按成功收口但不请求 Lark，避免积压后集中补发。</td></tr>
+      </tbody></table>
+      <p>所有 Job 都有批次/时长上限，达到任一上限即结束本轮、留待下轮处理。监控关注队列最早等待时长、过期租约、MATERIALIZING 停滞、Outbox backlog/死信、通知最终失败。健康检查只读；单项失败写日志，不应阻塞其他巡检项。</p>
+    </section>
+
+    <section id="security">
+      <h2><span class="num">14</span>租户边界与敏感信息</h2>
+      <ul>
+        <li>用户 API 从认证上下文读取 <code>lesseeCode</code> 和操作人，不采信 Body 自带租户。后台 Job 全局扫描时，后续每条记录查询仍应按记录中的租户隔离。</li>
+        <li>敏感字段由算子版本 Schema 和参数定义的 <code>sensitive</code> 标志识别。Context、校验/预览、修订详情、Attempt 详情和运行历史在响应构造时执行脱敏；无法识别 Schema 时历史详情倾向于整节点隐藏。运行查询只脱敏响应副本。</li>
+        <li>敏感覆盖的 <code>resolvedOverrides</code> 记录以 <code>******</code> 替代具体值，并保留 <code>sensitive/overriddenBySchedule</code> 标记。该标记区分参数是否被调度覆盖，但不暴露明文。</li>
+        <li>通知 payload 是脱敏卡片快照；日志/异常不应拼接完整请求参数。数据集 Owner 来源与 Run 执行主体分开，自动调度 Run 可由 <code>SYSTEM_SCHEDULER</code> 执行，但产出归属仍使用 Pipeline Owner。</li>
+      </ul>
+      <div class="callout warning"><strong>重要安全事实：</strong>敏感值仍可能以明文存在于 Revision 的 <code>config_snapshot</code>，以及 Attempt 的 <code>final_node_params</code>（实际运行参数必须进入 NodeRun/运行上下文）。因此“接口响应已脱敏”不等于“数据库/备份无明文”。规格将此列为本期接受的数据风险；需按生产凭证数据等级配置 DB/备份/运维访问控制，并重新评估凭证参数是否应通过 Apollo 注入而非调度覆盖。</div>
+    </section>
+
+    <section id="gaps">
+      <h2><span class="num">15</span>规格与代码差异、部署注意点</h2>
+      <p>以下仅列本次阅读中确认的状态差异或需显式核对项，不在此文中擅自修改规格/实现。</p>
+      <table><thead><tr><th>事项</th><th>规格/文档口径</th><th>当前代码观察</th><th>建议解读</th></tr></thead><tbody>
+        <tr><td>迭代状态</td><td><code>04-iteration/pipeline-scheduling/README.md</code>仍标注技术设计完成、待实施。</td><td>后端已有完整 Controller、Service、Mapper、7 个 Job 及大量测试。</td><td>README 是过期状态说明；以仓库实现与各文件日期为准。</td></tr>
+        <tr><td>Job 数量/职责</td><td>较早 Backend/Runtime 设计表列 5 个主 Job；Migration 清单为 7 个。</td><td>实际注册 7 个：含 FanInSeal 和 Health。</td><td>部署以代码的 <code>@NdspJob</code> 名称为准，不能遗漏 Seal/Health。</td></tr>
+        <tr><td>通知扫描频率</td><td>Runtime 设计建议 10–30 秒，Migration 与 Job 注释建议 30–60 秒。</td><td>Job 注释为 30–60 秒，Service 重试为 1/5/15 分钟。</td><td>按 Worker 注释建议 30–60 秒注册；对齐规格建议需单独决策。</td></tr>
+        <tr><td>敏感值持久化</td><td>规格允许敏感值写入 Revision 与 Manifest，但要求 API/通知脱敏，风险已接受。</td><td>Resolver 对 override 展示快照掩码，但 finalNodeParams 持有执行所需真实 JSON；Revision 配置快照同样可能包含原始模板。</td><td>这是存储层明文风险，不可用“响应脱敏”推导为加密存储。受控访问并评估密钥注入方案。</td></tr>
+        <tr><td>幂等请求头契约</td><td>API 规格要求立即运行、历史重放、取消等写操作有 <code>Idempotency-Key</code>。</td><td>Controller 当前只在创建/编辑显式读取该 Header；run、replay、cancel、cancel-waiting 方法未读取。</td><td>可能存在契约偏差。若调用方重试必须做到请求级幂等，需核对 Service/中间层和线上 API 契约；本文不推定已有保证。</td></tr>
+        <tr><td>Cron 时区</td><td>规格本期固定 <code>Asia/Shanghai</code>。</td><td>配置归一化默认该值，但 Cron Parser 接收 LocalDateTime；Epoch 转换使用 JVM system zone。</td><td>部署核实 JVM 时区；未来可考虑将 ZoneId 显式传给计算和触发键生成。</td></tr>
+        <tr><td>调度技术设计状态</td><td>Spec 中主设计文档日期 2026-10-08；部分条目反映分批实施的基线。</td><td>实现已经包含后续调整，例如 Cron-SKIP 提交后直发、7 Job、历史回放校验等。</td><td>遇到冲突时以“当前实现行为 + 规格差异记录”呈现，不能把历史建议误写成现状。</td></tr>
+      </tbody></table>
+      <div class="callout info"><strong>当前职责切分：</strong>README 和不同规格文件版本不完全一致。本文不新增/改写 <code>vmbc-spec</code>，仅作为实现总结；如果后续将差异回写规格，应先明确本期目标基线和产品契约。</div>
+    </section>
+
+    <section id="testing">
+      <h2><span class="num">16</span>测试覆盖与工程落位</h2>
+      <p>调度实现集中在后端 Service 模块的 <code>service/pipeline/scheduling</code>、<code>dao/pipeline/scheduling</code>、<code>entity/pipeline/scheduling</code> 与对应 model 包；Controller 在 Web 模块。建表 SQL 位于 <code>vmbc-data-be-service/src/main/resources/sql/pipeline-scheduling-ddl-20261013.sql</code>，并提供独立 migration、verify 和 rollback 脚本。</p>
+      <p>现有测试覆盖 Cron parser/Misfire、模板引擎/JSON Pointer/Schema 绑定、调度校验与保存、Dispatch 并发策略、Runtime 调度准入、Fan-in Writer/Seal policy、RunOutput、Outbox 发布、通知重试、恢复监控、历史详情脱敏和重放准入等单元/服务行为。</p>
+      <table><thead><tr><th>改动/回归面</th><th>建议验证</th></tr></thead><tbody>
+        <tr><td>调度 Service / 模板 / 队列</td><td><code>mvn -q -pl vmbc-data-be-service test</code></td></tr>
+        <tr><td>Controller/API 契约</td><td><code>mvn -q -pl vmbc-data-be-web test</code></td></tr>
+        <tr><td>跨模块运行时/接口变更</td><td><code>mvn -q -pl vmbc-data-be-web -am package</code></td></tr>
+        <tr><td>SQL 与并发约束</td><td>在目标 MySQL 版本验证 DDL、唯一键/NULL 语义、CAS 更新和锁顺序；执行 SQL verify 脚本并审阅 EXPLAIN。</td></tr>
+      </tbody></table>
+      <p class="small">本文只新增 HTML 文档，未修改代码、SQL 或规格。36 为按相关测试路径/文件名筛选所得文件数；本次未运行 Maven 测试。</p>
+    </section>
+
+    <section id="engineering">
+      <h2><span class="num">17</span>架构亮点、难点与工作量</h2>
+      <p>这不是简单的“定时器 + 调接口”，而是在既有 Pipeline Runtime 上补齐一套有审计、可恢复、可扩展的调度控制面。系统复杂度主要来自并发正确性、业务结果收口和跨任务可靠协作。</p>
+      <div class="two-col">
+        <div class="card"><h4>亮点 · 复用而不侵入</h4><p>调度只负责编排和准入，通过 <code>PipelineRuntimeOrchestrator</code> 复用既有执行引擎；等待、跳过、取消留在 Attempt 域，不污染 PipelineRun 状态机。</p></div>
+        <div class="card"><h4>亮点 · 数据库承载事实</h4><p>NDSP 只周期唤醒，MySQL 中的游标、唯一键、事务、租约与 Outbox 构成可审计事实；重复唤醒和进程崩溃由持久化状态收敛，而非依赖内存锁。</p></div>
+        <div class="card"><h4>亮点 · 版本与参数可追溯</h4><p>调度绑定不可变 Pipeline 版本；Revision 固定配置，Attempt 固化 Manifest，支持复盘和历史重放；Schema 驱动参数绑定，未覆盖值继续沿用版本静态默认值。</p></div>
+        <div class="card"><h4>亮点 · 输出事件形成闭环</h4><p>以物化后的 RunOutput 作为跨产线依赖和通知事实源；Outbox + Fan-in 将异步事件、乱序到达、多上游收敛和下游派发串成可恢复链路。</p></div>
+      </div>
+      <h3>主要难点</h3>
+      <table><thead><tr><th>难点</th><th>复杂性来源</th><th>实现上的关键约束</th></tr></thead><tbody>
+        <tr><td>并发与幂等</td><td>多个 NDSP 唤醒、API 手动触发、跨 Schedule 共享产线版本资源；“先查空闲再启动”存在竞态。</td><td>唯一键与游标 CAS 防重；最终准入落在 Pipeline 行锁及 Runtime；租约 token 防止过期执行上下文回写。</td></tr>
+        <tr><td>执行终态与业务终态</td><td>DAG 成功不代表数据集已物化；物化失败也不应篡改已完成的 PipelineRun。</td><td>独立 RunOutput 状态机收口，并在同一事务推进 Attempt 终态和 Outbox 事件。</td></tr>
+        <tr><td>参数与版本语义</td><td>模板、JSON Pointer、数据类型、算子 Schema、上游版本解析和敏感字段共同影响实际执行。</td><td>重参数解析放在长事务外；启动事务再次校验 Revision/租约并原子固化 Manifest；运行数据与 API 脱敏边界明确区分。</td></tr>
+        <tr><td>Fan-in 乱序与修复</td><td>多上游终态到达顺序不确定，required/optional 规则、收敛窗口和失败后修复都影响是否派发。</td><td>成员 append-only、按业务时间确定当前成员、延迟封口再复核；失败修复通过轮次控制，避免重复下游执行。</td></tr>
+        <tr><td>异步任务运维</td><td>7 个 Job 各有独立积压、租约、重试、超时和灰度开关；频率还由 NDSP 注册侧配置。</td><td>有界批次/时长、恢复任务、只读健康巡检和死信告警共同提供运维闭环。</td></tr>
+      </tbody></table>
+      <h3>工作量画像</h3>
+      <p>从已落地范围看，整体工作量<strong>偏大，属于跨模块的中大型后端能力</strong>。以下是相对复杂度，不是人天估算；仅凭代码无法可靠反推实际团队投入。</p>
+      <table><thead><tr><th>工作流</th><th>复杂度</th><th>主要工作</th></tr></thead><tbody>
+        <tr><td>定义管理与 API</td><td><span class="tag">L</span></td><td>租户边界、CRUD、不可变 Revision、乐观并发、校验预览及历史查询。</td></tr>
+        <tr><td>Cron、Misfire 与队列准入</td><td><span class="tag">XL</span></td><td>表达式解析、游标推进、补跑策略、跨 Schedule 共享串行队列、并行例外与最终资源门禁。</td></tr>
+        <tr><td>动态参数与运行适配</td><td><span class="tag">L–XL</span></td><td>模板语言、Schema/类型校验、上游解析、Manifest、精确重放及既有 Runtime 兼容。</td></tr>
+        <tr><td>输出物化与 Fan-in</td><td><span class="tag">XL</span></td><td>执行/产出双状态机、多依赖聚合、事件乱序、收敛封口、失败修复和下游 Attempt 创建。</td></tr>
+        <tr><td>Outbox、通知与恢复观测</td><td><span class="tag">L–XL</span></td><td>租约认领、退避重试、幂等去重、飞书外部调用、死信、恢复校准、指标告警与灰度开关。</td></tr>
+        <tr><td>数据库迁移与验证</td><td><span class="tag">L</span></td><td>9 张表、索引/唯一约束、存量 Pipeline 兼容、迁移/回滚脚本，以及事务和竞争场景测试。</td></tr>
+      </tbody></table>
+      <div class="callout info"><strong>规模证据：</strong>当前实现有 3 个调度 API Controller、7 个调度 NDSP Job、9 张调度领域表；按调度、Schedule、Fan-in、Outbox、Notification 等路径/文件名筛选，Service 模块约有 36 个相关测试文件。该数量表示测试文件规模，不等于测试用例数或覆盖率。<br><strong>项目判断：</strong>主要投入不在 CRUD 或建表，而在跨入口并发语义、事务原子性、错误恢复和可观测性；这些也是后续变更最需要补回归测试的区域。</div>
+    </section>
+
+    <section id="sources">
+      <h2><span class="num">18</span>依据与代码索引</h2>
+      <h3>主要规格</h3>
+      <ul>
+        <li><a href="../../vmbc-spec/04-iteration/pipeline-scheduling/pipeline-scheduling-backend-design.md"><code>vmbc-spec/04-iteration/pipeline-scheduling/pipeline-scheduling-backend-design.md</code></a></li>
+        <li><a href="../../vmbc-spec/04-iteration/pipeline-scheduling/pipeline-scheduling-runtime-design.md"><code>vmbc-spec/04-iteration/pipeline-scheduling/pipeline-scheduling-runtime-design.md</code></a></li>
+        <li><a href="../../vmbc-spec/04-iteration/pipeline-scheduling/pipeline-scheduling-migration.md"><code>vmbc-spec/04-iteration/pipeline-scheduling/pipeline-scheduling-migration.md</code></a></li>
+        <li><a href="../../vmbc-spec/04-iteration/pipeline-scheduling/pipeline-scheduling-sql.md"><code>vmbc-spec/04-iteration/pipeline-scheduling/pipeline-scheduling-sql.md</code></a> 与 <code>data-model/00-table-responsibilities.md</code>、各 API/业务模型文档</li>
+      </ul>
+      <h3>主要实现</h3>
+      <ul>
+        <li>Controller：<code>vmbc-data-be-web/src/main/java/com/nio/vmbc/vmbc/data/be/web/controller/pipeline/PipelineScheduleController.java</code>、<code>PipelineScheduleAttemptController.java</code>、<code>PipelineScheduleValidationController.java</code></li>
+        <li>定义/参数：<code>PipelineScheduleServiceImpl.java</code>、<code>PipelineScheduleValidationService.java</code>、<code>ScheduleParameterBindingService.java</code>、<code>ScheduleRunParameterResolver.java</code>、<code>ScheduleTemplateEngine.java</code></li>
+        <li>执行/触发：<code>PipelineCronTriggerService.java</code>、<code>ScheduleMisfireResolver.java</code>、<code>PipelineScheduleDispatcher.java</code>、<code>ScheduleAttemptRunLauncher.java</code>、<code>PipelineRuntimeOrchestrator.java</code></li>
+        <li>输出/依赖：<code>PipelineRunOutputService.java</code>、<code>PipelineOutputTerminalEventHandler.java</code>、<code>PipelineFanInWriter.java</code>、<code>PipelineFanInSealService.java</code></li>
+        <li>可靠性：<code>DomainOutboxPublisher.java</code>、<code>ScheduleAttemptTerminalEventHandler.java</code>、<code>NotificationDispatcher.java</code>、<code>PipelineScheduleRecoveryService.java</code>、<code>ScheduleHealthInspector.java</code></li>
+        <li>DDL：<a href="../vmbc-data-be-service/src/main/resources/sql/pipeline-scheduling-ddl-20261013.sql"><code>vmbc-data-be/vmbc-data-be-service/src/main/resources/sql/pipeline-scheduling-ddl-20261013.sql</code></a></li>
+      </ul>
+      <p>本文整理为项目内独立 HTML 架构文档，不新增或改写 <code>vmbc-spec</code> 规格。</p>
+    </section>
+  </main>
+</div>
+<div class="footer">VMBC 产线调度后端架构技术文档 · 代码复核日期：2026-10-27 · 工作量为复杂度画像，不推断人天</div>
+<script type="module">
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'strict', theme: 'neutral', flowchart: { curve: 'basis' } });
+</script>
+</body>
+</html>
